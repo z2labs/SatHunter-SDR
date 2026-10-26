@@ -22,6 +22,10 @@ pub struct Row {
     pub freq: f64,
     pub modes: String,
     pub bands: String,
+    /// SatNOGS reception of its best listed transmitter: health score, success % and good count
+    pub health: f64,
+    pub success: f64,
+    pub good: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,6 +100,7 @@ pub fn read_cache(root: &Path) -> RawData {
         tle_satnogs_json: rd("tle_satnogs.json"),
         tle_celestrak_txt: rd("tle_celestrak.txt"),
         satellites_json: rd("satellites.json"),
+        network_stats_json: rd("network_stats.json"),
     }
 }
 
@@ -154,7 +159,12 @@ fn group(r: &Row) -> u8 {
     }
 }
 
-pub fn sort_rows(rows: &mut [Row], now: f64) {
+pub fn sort_rows(rows: &mut [Row], now: f64, by: db::SortBy) {
+    if by == db::SortBy::Health {
+        // Favourites first, then the satellites the ground stations hear best
+        rows.sort_by(|a, b| (!a.fav).cmp(&!b.fav).then_with(|| b.health.total_cmp(&a.health)).then_with(|| a.pass.aos.total_cmp(&b.pass.aos)));
+        return;
+    }
     rows.sort_by(|a, b| {
         group(a)
             .cmp(&group(b))
@@ -172,7 +182,7 @@ pub fn candidates(sats: &[Satellite], f: &Filter, favs: &BTreeSet<u64>) -> Vec<(
         if f.favourites_only && !fav {
             continue;
         }
-        let mut r = Row { norad: s.norad, name: s.name.clone(), hu: s.hungarian, fav, pass: Pass::default(), freq: 0.0, modes: String::new(), bands: String::new() };
+        let mut r = Row { norad: s.norad, name: s.name.clone(), hu: s.hungarian, fav, pass: Pass::default(), freq: 0.0, modes: String::new(), bands: String::new(), health: 0.0, success: 0.0, good: 0 };
         let mut any = false;
         let mut bands: Vec<&str> = Vec::new();
         for t in &s.tx {
@@ -181,6 +191,11 @@ pub fn candidates(sats: &[Satellite], f: &Filter, favs: &BTreeSet<u64>) -> Vec<(
                 continue;
             }
             any = true;
+            if t.health() > r.health {
+                r.health = t.health();
+                r.success = (t.success() * 100.0).round();
+                r.good = t.good;
+            }
             if r.freq == 0.0 {
                 r.freq = t.centre();
             }
@@ -224,10 +239,15 @@ mod tests {
     fn favourites_then_hungarian_then_visible_first() {
         let mk = |n: u64, fav: bool, hu: bool, aos: f64| Row {
             norad: n, name: n.to_string(), hu, fav, pass: Pass { aos, ..Default::default() }, freq: 0.0, modes: String::new(), bands: String::new(),
+            health: n as f64, success: 0.0, good: 0,
         };
         let mut rows = vec![mk(1, false, false, 50.0), mk(2, false, false, 5.0), mk(3, false, true, 90.0), mk(4, true, false, 80.0), mk(5, false, false, 30.0)];
-        sort_rows(&mut rows, 10.0);
+        sort_rows(&mut rows, 10.0, db::SortBy::Pass);
         let order: Vec<u64> = rows.iter().map(|r| r.norad).collect();
         assert_eq!(order, vec![4, 3, 2, 5, 1]);
+        // Health: favourite first, then the healthiest
+        sort_rows(&mut rows, 10.0, db::SortBy::Health);
+        let order: Vec<u64> = rows.iter().map(|r| r.norad).collect();
+        assert_eq!(order, vec![4, 5, 3, 2, 1]);
     }
 }

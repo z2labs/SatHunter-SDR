@@ -133,7 +133,7 @@ mod tests {
         let mut tx = Transmitter {
             uuid: "x".into(), description: String::new(), kind: String::new(), mode: "FM".into(),
             service: String::new(), status: "active".into(), down_low: 145.8e6, down_high: 0.0,
-            baud: 0.0, alive: true, invert: false, norad: 1,
+            baud: 0.0, alive: true, invert: false, norad: 1, good: 0, total: 0,
         };
         assert_eq!(demod_for(&tx).0, Demod::Nfm);
         tx.mode = "CW".into();

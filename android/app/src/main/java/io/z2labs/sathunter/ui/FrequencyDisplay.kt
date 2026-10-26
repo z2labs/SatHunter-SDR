@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -49,7 +50,7 @@ private val POW10 = LongArray(10) { var v = 1L; repeat(it) { v *= 10 }; v }
  * it, long-press or the keyboard button to type a frequency in MHz.
  */
 @Composable
-fun FrequencyDisplay(hz: Double, fontSize: TextUnit, onSet: (Double) -> Unit, modifier: Modifier = Modifier) {
+fun FrequencyDisplay(hz: Double, fontSize: TextUnit, onSet: (Double) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     var typing by remember { mutableStateOf(false) }
     var active by remember { mutableIntStateOf(-1) }
     val current by rememberUpdatedState(hz)
@@ -98,7 +99,7 @@ fun FrequencyDisplay(hz: Double, fontSize: TextUnit, onSet: (Double) -> Unit, mo
                 )
             }
         }
-        IconButton(onClick = { typing = true }) { Icon(Icons.Filled.Keyboard, contentDescription = "Type a frequency", tint = Dim) }
+        IconButton(onClick = { typing = true }, modifier = if (compact) Modifier.size(34.dp) else Modifier) { Icon(Icons.Filled.Keyboard, contentDescription = "Type a frequency", tint = Dim) }
     }
 
     if (typing) {

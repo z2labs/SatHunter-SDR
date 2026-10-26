@@ -14,6 +14,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -39,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,6 +101,10 @@ fun ReceiverScreen(
     var viewLo by remember { mutableFloatStateOf(0f) }
     var viewHi by remember { mutableFloatStateOf(1f) }
     var radarLarge by remember { mutableStateOf(false) }
+    // Spectrum / waterfall split, dragged with the handle on the divider, kept between runs
+    val prefs = LocalContext.current.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE)
+    var split by remember { mutableFloatStateOf(prefs.getFloat("split", 0.32f).coerceIn(0.12f, 0.75f)) }
+    var areaH by remember { mutableIntStateOf(1) }
     var waterfall by remember { mutableStateOf<WaterfallView?>(null) }
     val stNow by rememberUpdatedState(st)
     // Shown centre frequency: while dragging it follows the finger at once (the hardware
@@ -114,6 +126,7 @@ fun ReceiverScreen(
             it.dispRate = st.specRate
         }
     }
+    LaunchedEffect(split, waterfall) { waterfall?.renderer?.spectrumFraction = split }
     fun moveCenter(hz: Double) {
         dragCenter = hz
         dragAt = System.currentTimeMillis()
@@ -135,7 +148,7 @@ fun ReceiverScreen(
         if (!fullscreen) TopBar(st, shownVfo, muted, onMute, onPlay, tuneTo) { onFullscreen(true) }
 
         Box(
-            Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
+            Modifier.weight(1f).fillMaxWidth().onSizeChanged { areaH = it.height.coerceAtLeast(1) }.pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
                         awaitPointerEvent(PointerEventPass.Initial)
@@ -184,7 +197,7 @@ fun ReceiverScreen(
                 val s = st
                 val w = size.width
                 val vfo = shownVfo
-                val specH = size.height * 0.32f
+                val specH = size.height * split
                 fun x(hz: Double): Float = ((((hz - shownCenter) / s.specRate + 0.5) - viewLo) / (viewHi - viewLo) * w).toFloat()
                 val half = s.bw / 2
                 val (a, b) = when (s.mode) {
@@ -214,30 +227,65 @@ fun ReceiverScreen(
                     drawText(m, topLeft = Offset(tx, specH - 6.dp.toPx() - m.size.height))
                     f += step
                 }
-                drawLine(Color(0x40FFFFFF), Offset(0f, specH), Offset(w, specH), 1f)
+                // Divider between spectrum and waterfall
+                drawRect(Color(0xFF0A0E14), Offset(0f, specH - 1.5.dp.toPx()), Size(w, 3.dp.toPx()))
+                drawLine(Color(0xFF6B7F95), Offset(0f, specH), Offset(w, specH), 1.5.dp.toPx())
+            }
+
+            // Handle in the middle of the divider: drag up / down to share the height
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { IntOffset(0, (areaH * split).roundToInt() - 16.dp.roundToPx()) }
+                    .size(88.dp, 32.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = { prefs.edit().putFloat("split", split).apply() },
+                        ) { c, dy ->
+                            c.consume()
+                            split = (split + dy / areaH).coerceIn(0.12f, 0.75f)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.size(52.dp, 16.dp).background(Color(0xFF2A3644), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        repeat(2) { Box(Modifier.size(26.dp, 2.dp).background(Color(0xFFB4C0CC), RoundedCornerShape(1.dp))) }
+                    }
+                }
             }
 
             if (fullscreen) {
                 // Floating frequency, transport and modes over the waterfall
                 Fade(controlsVisible, Modifier.align(Alignment.TopCenter)) {
                     Row(
-                        Modifier.padding(top = 10.dp).background(Glass, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 4.dp),
+                        Modifier.padding(top = 6.dp).background(Glass, RoundedCornerShape(14.dp)).padding(horizontal = 10.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column {
-                            FrequencyDisplay(shownVfo, 24.sp, tuneTo)
+                            FrequencyDisplay(shownVfo, 21.sp, tuneTo, compact = true)
                             LevelLine(st)
                         }
-                        Spacer(Modifier.width(6.dp))
-                        IconButton(onClick = onMute) {
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = onMute, modifier = Modifier.size(40.dp)) {
                             Icon(if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, "Mute")
                         }
-                        PlayButton(st, onPlay)
-                        IconButton(onClick = { onFullscreen(false) }) { Icon(Icons.Filled.FullscreenExit, "Exit full screen") }
+                        PlayButton(st, onPlay, Modifier.size(40.dp))
                     }
                 }
+                // Leaving full screen: its own big button in the corner, away from the others
+                Fade(controlsVisible, Modifier.align(Alignment.TopEnd)) {
+                    FilledIconButton(
+                        onClick = { onFullscreen(false) },
+                        modifier = Modifier.padding(8.dp).size(60.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Glass),
+                    ) { Icon(Icons.Filled.FullscreenExit, "Exit full screen", Modifier.size(36.dp)) }
+                }
                 Fade(controlsVisible, Modifier.align(Alignment.BottomCenter)) {
-                    ModeRow(st, onMode, Modifier.padding(bottom = 12.dp).background(Glass, RoundedCornerShape(18.dp)))
+                    ModeRow(st, onMode, Modifier.padding(bottom = 8.dp).background(Glass, RoundedCornerShape(14.dp)))
                 }
             }
 
@@ -274,8 +322,8 @@ private fun LevelLine(st: Status) {
 }
 
 @Composable
-private fun PlayButton(st: Status, onPlay: () -> Unit) {
-    FilledIconButton(onClick = onPlay, colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (st.running) Down else Accent)) {
+private fun PlayButton(st: Status, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+    FilledIconButton(onClick = onPlay, modifier = modifier, colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (st.running) Down else Accent)) {
         Icon(if (st.running) Icons.Filled.Stop else Icons.Filled.PlayArrow, contentDescription = if (st.running) "Stop" else "Start")
     }
 }

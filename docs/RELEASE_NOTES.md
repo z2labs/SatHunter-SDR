@@ -1,4 +1,4 @@
-# SatHunterSDR 0.2.0 beta 4
+# SatHunterSDR 0.2.0 beta 5
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
@@ -6,6 +6,17 @@ file manager when asked).
 **Coming from beta 1 or beta 2: uninstall the old app once** (Android says it "conflicts with an
 existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
 with the same Z2Labs key and installs over the previous one.
+
+## New in beta 5
+
+- **"Best heard" order** on the satellite list: favourites first, then the satellites the SatNOGS
+  ground stations receive most reliably (share of good observations weighted by how many there
+  are). Every row shows ♥ success rate · number of good observations. Press ⟳ once to download
+  the statistics.
+- Spectrum / waterfall divider is clearer and has a **handle**: drag it up or down to share the
+  height (remembered).
+- Full screen: the floating bar is slimmer; leaving full screen is a big separate button in the
+  corner, so it is not hit by accident.
 
 ## New in beta 4
 
