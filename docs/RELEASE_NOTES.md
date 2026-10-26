@@ -1,4 +1,4 @@
-# SatHunterSDR 0.2.0 beta 3
+# SatHunterSDR 0.2.0 beta 4
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
@@ -6,6 +6,17 @@ file manager when asked).
 **Coming from beta 1 or beta 2: uninstall the old app once** (Android says it "conflicts with an
 existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
 with the same Z2Labs key and installs over the previous one.
+
+## New in beta 4
+
+- **Seamless dragging**: every waterfall row remembers the frequency it was received at, so
+  while you drag, the whole history slides with your finger and new rows fill in from the side
+  (no jumping when the receiver retunes).
+- **Center tuning** (Settings → Receiver): the VFO stays in the middle of the screen and tuning
+  moves the whole spectrum, like SDR++.
+- **New automatic gain for the RTL-SDR**: it watches the ADC level and steps the gain down fast
+  when the signal clips, up slowly when it is weak (the tuner's own AGC overloaded on FM
+  broadcast). The status line shows the gain it chose.
 
 ## New in beta 3
 

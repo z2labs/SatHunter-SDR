@@ -77,7 +77,8 @@ struct Inner {
     source: Mutex<Option<Box<dyn Source>>>,
     params: Mutex<DspParams>,
     out: Mutex<DspOut>,
-    rows: Mutex<VecDeque<Vec<f32>>>,
+    /// FFT rows with the centre frequency and sample rate they were taken at
+    rows: Mutex<VecDeque<(f64, f64, Vec<f32>)>>,
     audio: Mutex<VecDeque<f32>>,
     sat: Mutex<SatState>,
     sat_signal: SharedSatSignal,
@@ -151,6 +152,8 @@ enum Cmd {
     RealTime,
     StepHz { hz: f64 },
     AutoDemod { on: bool },
+    /// Keep the VFO in the middle: tuning moves the hardware (like SDR++ "Center Tuning")
+    CenterTuning { on: bool },
     SatList,
     SatDetail,
     Status,
@@ -231,16 +234,21 @@ impl Engine {
         v.to_string()
     }
 
-    /// Copy new spectrum rows (oldest first) into `out`. Returns (rows copied, bins per row).
-    pub fn spectrum_rows(&self, out: &mut [f32]) -> (usize, usize) {
+    /// Copy new spectrum rows (oldest first) into `out`, and each row's centre frequency and
+    /// sample rate into `meta` (2 values per row, when it has room). Returns (rows, bins per row).
+    pub fn spectrum_rows(&self, out: &mut [f32], meta: &mut [f64]) -> (usize, usize) {
         let mut q = lock(&self.inner.rows);
-        let Some(bins) = q.front().map(|r| r.len()) else { return (0, 0) };
+        let Some(bins) = q.front().map(|r| r.2.len()) else { return (0, 0) };
         let mut n = 0;
-        while let Some(r) = q.front() {
-            if r.len() != bins || (n + 1) * bins > out.len() {
+        while let Some((c, rate, r)) = q.front() {
+            if r.len() != bins || (n + 1) * bins > out.len() || (!meta.is_empty() && 2 * n + 2 > meta.len()) {
                 break;
             }
             out[n * bins..(n + 1) * bins].copy_from_slice(r);
+            if !meta.is_empty() {
+                meta[2 * n] = *c;
+                meta[2 * n + 1] = *rate;
+            }
             q.pop_front();
             n += 1;
         }
@@ -278,6 +286,12 @@ impl Engine {
             Cmd::Center { hz } => {
                 let (min, max) = lock(&i.source).as_ref().map(|s| (s.info().min_hz, s.info().max_hz)).unwrap_or((0.0, f64::MAX));
                 let c = set_center(i, hz.clamp(min, max))?;
+                if lock(&i.cfg).center_tuning {
+                    // Centre tuning: the VFO rides in the middle of the span
+                    lock(&i.cfg).vfo_hz = c;
+                    i.bump_params(|p| p.vfo_hz = c);
+                    return Ok(json!({ "center_hz": c, "vfo_hz": c }));
+                }
                 // The VFO stays where it is unless it would leave the received span: then it is
                 // pushed along at the edge
                 let (rate, bw, vfo) = {
@@ -423,6 +437,15 @@ impl Engine {
                 let hz = hz.clamp(1.0, 1000.0);
                 lock(&i.cfg).step_hz = hz;
                 lock(&i.sat).tracker.step_hz = hz;
+                i.save();
+                Ok(json!({}))
+            }
+            Cmd::CenterTuning { on } => {
+                lock(&i.cfg).center_tuning = on;
+                if on {
+                    let v = lock(&i.cfg).vfo_hz;
+                    tune(i, v)?;
+                }
                 i.save();
                 Ok(json!({}))
             }
@@ -600,10 +623,16 @@ fn set_center(i: &Inner, hz: f64) -> Result<f64, String> {
 /// Tune the VFO. If it would leave the usable span, move the hardware so the signal sits a
 /// little away from the DC spike.
 fn tune(i: &Inner, hz: f64) -> Result<(), String> {
-    let (center, rate, bw) = {
+    let (center, rate, bw, centered) = {
         let c = lock(&i.cfg);
-        (c.center_hz, c.rate, c.bw)
+        (c.center_hz, c.rate, c.bw, c.center_tuning)
     };
+    if centered {
+        let c = set_center(i, hz)?;
+        lock(&i.cfg).vfo_hz = c;
+        i.bump_params(|p| p.vfo_hz = c);
+        return Ok(());
+    }
     let edge = rate * 0.45 - bw / 2.0;
     if (hz - center).abs() > edge.max(rate * 0.05) {
         set_center(i, hz - 0.2 * rate)?;
@@ -645,7 +674,7 @@ fn dsp(i: Arc<Inner>, rx: Receiver<sh_sources::Block>) {
             if !new_rows.is_empty() {
                 let mut q = lock(&i.rows);
                 for r in new_rows {
-                    q.push_back(r);
+                    q.push_back((b.center_hz, b.rate, r));
                 }
                 while q.len() > ROWS_MAX {
                     q.pop_front();
@@ -989,6 +1018,7 @@ fn status(i: &Inner) -> Value {
         "source": c.source,
         "center_hz": c.center_hz,
         "vfo_hz": c.vfo_hz,
+        "center_tuning": c.center_tuning,
         "rate": c.rate,
         "mode": c.mode,
         "bw": c.bw,
@@ -1119,7 +1149,9 @@ mod tests {
         assert_eq!(cmd(&e, r#"{"cmd":"start"}"#)["ok"], true);
         std::thread::sleep(Duration::from_millis(600));
         let mut rows = vec![0.0f32; 2048 * 64];
-        let (n, bins) = e.spectrum_rows(&mut rows);
+        let mut meta = vec![0.0f64; 128];
+        let (n, bins) = e.spectrum_rows(&mut rows, &mut meta);
+        assert!(meta[1] > 0.0, "row rate");
         assert!(n > 0 && bins == 2048, "no spectrum rows");
         let mut a = vec![0.0f32; 48_000];
         let got = e.audio(&mut a);
@@ -1128,6 +1160,24 @@ mod tests {
         assert_eq!(st["running"], true);
         assert_eq!(cmd(&e, r#"{"cmd":"bogus"}"#)["ok"], false);
         cmd(&e, r#"{"cmd":"stop"}"#);
+    }
+
+    #[test]
+    fn center_tuning_keeps_the_vfo_in_the_middle() {
+        let d = tmpdir("ctune");
+        write_iss(&d);
+        Config { update_days: 0.0, ..Config::default() }.save(&d.join("config.json"));
+        let e = Engine::new(&d);
+        cmd(&e, r#"{"cmd":"source","id":"demo"}"#);
+        assert_eq!(cmd(&e, r#"{"cmd":"center_tuning","on":true}"#)["ok"], true);
+        cmd(&e, r#"{"cmd":"tune","hz":101500000}"#);
+        let st = cmd(&e, r#"{"cmd":"status"}"#);
+        assert_eq!(st["center_hz"], st["vfo_hz"]);
+        assert_eq!(st["vfo_hz"].as_f64(), Some(101.5e6));
+        cmd(&e, r#"{"cmd":"center","hz":102000000}"#);
+        let st = cmd(&e, r#"{"cmd":"status"}"#);
+        assert_eq!(st["vfo_hz"].as_f64(), Some(102e6));
+        assert_eq!(st["center_tuning"], true);
     }
 
     #[test]

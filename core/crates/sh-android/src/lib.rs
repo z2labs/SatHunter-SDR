@@ -1,7 +1,7 @@
 //! JNI bridge for the Android app (class io.z2labs.sathunter.Native).
 //! Every entry point catches panics: a bug in the core shows as an error, never as a crash.
 
-use jni::objects::{JClass, JFloatArray, JString};
+use jni::objects::{JClass, JDoubleArray, JFloatArray, JString};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 use sh_engine::Engine;
@@ -36,16 +36,20 @@ pub extern "system" fn Java_io_z2labs_sathunter_Native_command<'a>(mut env: JNIE
     env.new_string(out).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-/// Copies new spectrum rows into `out` (rows * bins floats). Returns rows << 16 | bins / 16
-/// (bins is a multiple of 16), 0 when nothing is new.
+/// Copies new spectrum rows into `out` (rows * bins floats) and each row's centre frequency and
+/// sample rate into `meta` (2 doubles per row). Returns rows << 16 | bins / 16 (bins is a
+/// multiple of 16), 0 when nothing is new.
 #[no_mangle]
-pub extern "system" fn Java_io_z2labs_sathunter_Native_spectrumRows(env: JNIEnv, _c: JClass, out: JFloatArray) -> jint {
+pub extern "system" fn Java_io_z2labs_sathunter_Native_spectrumRows(env: JNIEnv, _c: JClass, out: JFloatArray, meta: JDoubleArray) -> jint {
     let Some(e) = ENGINE.get() else { return 0 };
     let len = env.get_array_length(&out).unwrap_or(0).max(0) as usize;
+    let mlen = env.get_array_length(&meta).unwrap_or(0).max(0) as usize;
     let mut buf = vec![0.0f32; len];
-    let (n, bins) = guard((0, 0), || e.spectrum_rows(&mut buf));
+    let mut mbuf = vec![0.0f64; mlen.max(2)];
+    let (n, bins) = guard((0, 0), || e.spectrum_rows(&mut buf, &mut mbuf));
     if n > 0 {
         let _ = env.set_float_array_region(&out, 0, &buf[..n * bins]);
+        let _ = env.set_double_array_region(&meta, 0, &mbuf[..(2 * n).min(mlen)]);
         return ((n as jint) << 16) | ((bins / 16) as jint);
     }
     0

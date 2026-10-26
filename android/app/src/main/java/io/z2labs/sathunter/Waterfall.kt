@@ -15,7 +15,10 @@ import kotlin.math.min
 /**
  * Spectrum + waterfall drawn by the GPU (OpenGL ES 3). New FFT rows go into a ring texture
  * (one glTexSubImage2D per row), the colour map is a 256x1 texture looked up in the shader.
- * The view window (zoom) is [viewLo, viewHi] in 0..1 of the received span.
+ * The view window (zoom) is [viewLo, viewHi] in 0..1 of the span around [dispCenter].
+ * Every row remembers the centre frequency it was taken at, and the shader places it on the
+ * frequency axis accordingly: when the receiver is retuned (drag) the history slides with it
+ * instead of jumping, and the new rows fill in from the side.
  */
 class WaterfallView(context: Context) : GLSurfaceView(context) {
     val renderer = WaterfallRenderer()
@@ -31,6 +34,9 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
     @Volatile var viewLo = 0f
     @Volatile var viewHi = 1f
     @Volatile var spectrumFraction = 0.32f
+    /** Frequency axis shown: centre and width (Hz). NaN = the newest row's own centre. */
+    @Volatile var dispCenter = Double.NaN
+    @Volatile var dispRate = Double.NaN
     /** dB range in use (auto range), for the UI scale */
     @Volatile var rangeLo = -110f
     @Volatile var rangeHi = -40f
@@ -39,6 +45,14 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
     private var texW = 0
     private var head = 0
     private var rowBuf = FloatArray(64 * 2048)
+    private val meta = DoubleArray(128)
+    private val rowCenter = DoubleArray(rowsH)
+    private val rowRate = DoubleArray(rowsH) // 0 = empty row
+    private val offBuf: FloatBuffer = ByteBuffer.allocateDirect(4 * 2 * rowsH).order(ByteOrder.nativeOrder()).asFloatBuffer()
+    private var lineCenter = 0.0
+    private var lineRate = 0.0
+    private var lastCenter = 0.0
+    private var lastRate = 0.0
     private var bytes: ByteBuffer = ByteBuffer.allocateDirect(2048)
     private var line = FloatArray(2048)
     private var haveLine = false
@@ -49,6 +63,7 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
     private var progLine = 0
     private var texWf = 0
     private var texCmap = 0
+    private var texOff = 0
     private var vbo: FloatBuffer = ByteBuffer.allocateDirect(4 * 2 * 4 * 8192).order(ByteOrder.nativeOrder()).asFloatBuffer()
     private var width = 1
     private var height = 1
@@ -63,15 +78,19 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         in vec2 vUv;
         uniform sampler2D uWf;
         uniform sampler2D uCmap;
+        uniform highp sampler2D uOff; // per row: (row centre - shown centre) / row rate, shown rate / row rate
         uniform float uHead;   // newest row index + 1, in rows
         uniform float uRows;
-        uniform vec2 uView;    // lo, hi in 0..1 of the span
+        uniform vec2 uView;    // lo, hi in 0..1 of the shown span
         out vec4 o;
         void main() {
             float u = mix(uView.x, uView.y, vUv.x);
             float row = uHead - 0.5 - (1.0 - vUv.y) * uRows;   // newest at the top
-            float v = row / uRows;
-            float val = texture(uWf, vec2(u, v)).r;
+            int ri = int(mod(floor(row), uRows));
+            vec2 off = texelFetch(uOff, ivec2(ri, 0), 0).rg;
+            float ur = (u - 0.5) * off.y - off.x + 0.5;         // where that frequency is in the row
+            if (off.y <= 0.0 || ur < 0.0 || ur > 1.0) { o = texture(uCmap, vec2(0.0, 0.5)); return; }
+            float val = texture(uWf, vec2(ur, (float(ri) + 0.5) / uRows)).r;
             o = texture(uCmap, vec2(val, 0.5));
         }
     """
@@ -91,10 +110,15 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         progWf = program(vsQuad, fsWf)
         progLine = program(vsLine, fsLine)
-        val t = IntArray(2)
-        GLES30.glGenTextures(2, t, 0)
+        val t = IntArray(3)
+        GLES30.glGenTextures(3, t, 0)
         texWf = t[0]
         texCmap = t[1]
+        texOff = t[2]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texOff)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RG32F, rowsH, 1, 0, GLES30.GL_RG, GLES30.GL_FLOAT, null)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         // Colour map: navy -> blue -> cyan -> yellow -> red -> white
         val stops = arrayOf(
             floatArrayOf(0f, 0.02f, 0.03f, 0.10f), floatArrayOf(0.25f, 0.05f, 0.15f, 0.55f),
@@ -132,6 +156,7 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         if (bins == texW) return
         texW = bins
         head = 0
+        rowRate.fill(0.0)
         val zero = ByteBuffer.allocateDirect(bins * rowsH)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texWf)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
@@ -148,7 +173,7 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
     /** Pull new rows from the engine and upload them. */
     private fun pull() {
         while (true) {
-            val r = Native.spectrumRows(rowBuf)
+            val r = Native.spectrumRows(rowBuf, meta)
             if (r == 0) return
             val rows = r ushr 16
             val bins = (r and 0xffff) * 16
@@ -160,6 +185,16 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
             ensureTexture(bins)
             for (k in 0 until rows) {
                 val off = k * bins
+                val c = meta[2 * k]
+                val rate = meta[2 * k + 1]
+                rowCenter[head] = c
+                rowRate[head] = rate
+                lastCenter = c
+                lastRate = rate
+                // The averaged spectrum line starts over when the receiver moves
+                if (haveLine && (kotlin.math.abs(c - lineCenter) > 0.5 || rate != lineRate)) haveLine = false
+                lineCenter = c
+                lineRate = rate
                 autoRange(off, bins)
                 val lo = rangeLo
                 val span = max(1f, rangeHi - lo)
@@ -206,6 +241,23 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         if (texW == 0) return
         val specH = (height * spectrumFraction).toInt()
         val wfH = height - specH
+        val dc = dispCenter.let { if (it.isNaN()) lastCenter else it }
+        val dr = dispRate.let { if (it.isNaN() || it <= 0.0) lastRate else it }
+        // Per-row placement on the shown frequency axis
+        offBuf.position(0)
+        for (k in 0 until rowsH) {
+            val rr = rowRate[k]
+            if (rr > 0 && dr > 0) {
+                offBuf.put(((rowCenter[k] - dc) / rr).toFloat()); offBuf.put((dr / rr).toFloat())
+            } else {
+                offBuf.put(0f); offBuf.put(0f)
+            }
+        }
+        offBuf.position(0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texOff)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 4)
+        GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, rowsH, 1, GLES30.GL_RG, GLES30.GL_FLOAT, offBuf)
         // Waterfall (bottom part)
         GLES30.glViewport(0, 0, width, wfH)
         GLES30.glUseProgram(progWf)
@@ -215,6 +267,7 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texCmap)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(progWf, "uCmap"), 1)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(progWf, "uOff"), 2)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(progWf, "uHead"), head.toFloat())
         GLES30.glUniform1f(GLES30.glGetUniformLocation(progWf, "uRows"), rowsH.toFloat())
         GLES30.glUniform2f(GLES30.glGetUniformLocation(progWf, "uView"), viewLo, viewHi)
@@ -226,15 +279,19 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         val bins = texW
         val lo = rangeLo
         val span = max(1f, rangeHi - lo)
-        val i0 = (viewLo * bins).toInt().coerceIn(0, bins - 1)
-        val i1 = (viewHi * bins).toInt().coerceIn(i0 + 1, bins)
-        val n = min(i1 - i0, 4096)
-        val stride = (i1 - i0).toFloat() / n
+        // Line bins under the shown axis (the line may be from a slightly different centre)
+        val scale = if (lineRate > 0) dr / lineRate else 1.0
+        val shift = if (lineRate > 0) (lineCenter - dc) / lineRate else 0.0
+        fun bin(u: Double) = ((u - 0.5) * scale - shift + 0.5) * bins
+        val b0 = bin(viewLo.toDouble())
+        val b1 = bin(viewHi.toDouble())
+        val n = min(max(2, (b1 - b0).toInt()), 4096)
         vbo.position(0)
         for (k in 0 until n) {
-            val i = (i0 + k * stride).toInt().coerceIn(0, bins - 1)
+            val bf = b0 + (b1 - b0) * k / (n - 1)
+            val i = bf.toInt()
             val x = -1f + 2f * k / max(1, n - 1)
-            val y = -1f + 2f * ((line[i] - lo) / span).coerceIn(0f, 1f) * 0.92f
+            val y = if (i < 0 || i >= bins) -1f else -1f + 2f * ((line[i] - lo) / span).coerceIn(0f, 1f) * 0.92f
             vbo.put(x); vbo.put(y)
             vbo.put(x); vbo.put(-1f)
         }

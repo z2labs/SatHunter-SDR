@@ -72,6 +72,13 @@ fun SettingsScreen(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Center tuning", fontSize = 14.sp)
+                Text("The VFO stays in the middle, tuning moves the whole spectrum", color = Dim, fontSize = 12.sp)
+            }
+            Switch(checked = st.centerTuning, onCheckedChange = { engine.centerTuning(it) })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
             Text("Automatic gain", Modifier.weight(1f), fontSize = 14.sp)
             Switch(checked = st.gain == null, onCheckedChange = { engine.gain(if (it) null else if (st.source == "esp") 60.0 else 25.4) })
         }

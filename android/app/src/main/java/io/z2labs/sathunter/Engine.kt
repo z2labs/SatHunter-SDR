@@ -36,6 +36,7 @@ data class Status(
     val devices: List<String> = emptyList(),
     val rates: List<Double> = emptyList(),
     val gains: List<Double> = emptyList(),
+    val centerTuning: Boolean = false,
 )
 
 data class PassInfo(
@@ -252,6 +253,7 @@ class Engine(dataDir: String) {
     fun locator(loc: String) = async("locator", JSONObject().put("loc", loc))
     fun gps(lat: Double, lon: Double, alt: Double) = async("gps", JSONObject().put("lat", lat).put("lon", lon).put("alt_m", alt))
     fun followGps(on: Boolean) = async("follow_gps", JSONObject().put("on", on))
+    fun centerTuning(on: Boolean) = async("center_tuning", JSONObject().put("on", on))
     fun filter(f: FilterState) = async("filter", JSONObject().put("filter", f.toJson())) { refreshList() }
     fun favourite(norad: Long, on: Boolean) = async("favourite", JSONObject().put("norad", norad).put("on", on)) { refreshList() }
     fun satUpdate() = async("sat_update")
@@ -267,11 +269,14 @@ class Engine(dataDir: String) {
         if (!j.optBoolean("ok")) return
         val st = j.optJSONObject("station")
         val recent = System.currentTimeMillis() - lastTuneAt < 400
+        val recentCenter = System.currentTimeMillis() - lastCenterAt < 400
+        val centered = j.optBoolean("center_tuning")
         _status.value = Status(
             running = j.optBoolean("running"),
             source = j.optString("source"),
-            centerHz = j.optDouble("center_hz"),
-            vfoHz = if (recent) lastTune else j.optDouble("vfo_hz"),
+            centerHz = if (recentCenter) lastCenter else j.optDouble("center_hz"),
+            vfoHz = if (recent) lastTune else if (recentCenter && centered) lastCenter else j.optDouble("vfo_hz"),
+            centerTuning = centered,
             rate = j.optDouble("rate"),
             mode = j.optString("mode"),
             bw = j.optDouble("bw"),

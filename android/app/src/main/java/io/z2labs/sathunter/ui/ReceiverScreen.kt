@@ -86,7 +86,7 @@ fun ReceiverScreen(
     onPlay: () -> Unit,
     onMute: () -> Unit,
     onTune: (Double) -> Unit,
-    onPanHz: (Double) -> Unit,
+    onCenter: (Double) -> Unit,
     onMode: (String) -> Unit,
     onCompass: () -> Unit,
 ) {
@@ -95,9 +95,31 @@ fun ReceiverScreen(
     var radarLarge by remember { mutableStateOf(false) }
     var waterfall by remember { mutableStateOf<WaterfallView?>(null) }
     val stNow by rememberUpdatedState(st)
-    LaunchedEffect(viewLo, viewHi, waterfall) {
-        waterfall?.renderer?.let { it.viewLo = viewLo; it.viewHi = viewHi }
+    // Shown centre frequency: while dragging it follows the finger at once (the hardware
+    // catches up a moment later; the waterfall places each row by its own centre)
+    var dragCenter by remember { mutableStateOf<Double?>(null) }
+    var dragAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(dragAt) {
+        delay(1500)
+        dragCenter = null
     }
+    val shownCenter = dragCenter ?: st.centerHz
+    val shownCenterNow by rememberUpdatedState(shownCenter)
+    val shownVfo = if (st.centerTuning) shownCenter else st.vfoHz
+    LaunchedEffect(viewLo, viewHi, waterfall, shownCenter, st.specRate) {
+        waterfall?.renderer?.let {
+            it.viewLo = viewLo
+            it.viewHi = viewHi
+            it.dispCenter = shownCenter
+            it.dispRate = st.specRate
+        }
+    }
+    fun moveCenter(hz: Double) {
+        dragCenter = hz
+        dragAt = System.currentTimeMillis()
+        onCenter(hz)
+    }
+    val tuneTo: (Double) -> Unit = { if (st.centerTuning) moveCenter(it) else onTune(it) }
     // Full screen: the floating controls fade out after a few seconds and come back on a touch
     var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var controlsVisible by remember { mutableStateOf(true) }
@@ -110,7 +132,7 @@ fun ReceiverScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (!fullscreen) TopBar(st, muted, onMute, onPlay, onTune) { onFullscreen(true) }
+        if (!fullscreen) TopBar(st, shownVfo, muted, onMute, onPlay, tuneTo) { onFullscreen(true) }
 
         Box(
             Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
@@ -130,7 +152,8 @@ fun ReceiverScreen(
                         detectTapGestures { p ->
                             val s = stNow
                             val u = viewLo + p.x / size.width * (viewHi - viewLo)
-                            onTune(s.specCenterHz + (u - 0.5) * s.specRate)
+                            val f = shownCenterNow + (u - 0.5) * s.specRate
+                            if (s.centerTuning) moveCenter(f) else onTune(f)
                         }
                     }
                     .pointerInput(Unit) {
@@ -153,29 +176,30 @@ fun ReceiverScreen(
                                 val rest = du - (lo - viewLo)
                                 viewLo = lo
                                 viewHi = lo + span
-                                if (rest != 0f) onPanHz(rest.toDouble() * s.specRate)
+                                if (rest != 0f) moveCenter(shownCenterNow + rest.toDouble() * s.specRate)
                             }
                         }
                     }
             ) {
                 val s = st
                 val w = size.width
+                val vfo = shownVfo
                 val specH = size.height * 0.32f
-                fun x(hz: Double): Float = ((((hz - s.specCenterHz) / s.specRate + 0.5) - viewLo) / (viewHi - viewLo) * w).toFloat()
+                fun x(hz: Double): Float = ((((hz - shownCenter) / s.specRate + 0.5) - viewLo) / (viewHi - viewLo) * w).toFloat()
                 val half = s.bw / 2
                 val (a, b) = when (s.mode) {
-                    "USB" -> Pair(s.vfoHz, s.vfoHz + s.bw)
-                    "LSB" -> Pair(s.vfoHz - s.bw, s.vfoHz)
-                    else -> Pair(s.vfoHz - half, s.vfoHz + half)
+                    "USB" -> Pair(vfo, vfo + s.bw)
+                    "LSB" -> Pair(vfo - s.bw, vfo)
+                    else -> Pair(vfo - half, vfo + half)
                 }
                 val xa = x(a)
                 val xb = max(x(b), xa + 2f)
                 drawRect(Color(0x33FFFFFF), Offset(xa, 0f), Size(xb - xa, specH))
-                val xv = x(s.vfoHz)
+                val xv = x(vfo)
                 drawLine(Color(0xFFFF4A3A), Offset(xv, 0f), Offset(xv, size.height), 2.dp.toPx())
                 // Frequency scale along the bottom of the spectrum
-                val f0 = s.specCenterHz + (viewLo - 0.5) * s.specRate
-                val f1 = s.specCenterHz + (viewHi - 0.5) * s.specRate
+                val f0 = shownCenter + (viewLo - 0.5) * s.specRate
+                val f1 = shownCenter + (viewHi - 0.5) * s.specRate
                 val spanHz = max(1.0, f1 - f0)
                 val raw = spanHz / 5
                 val mag = 10.0.pow(floor(log10(raw)))
@@ -201,7 +225,7 @@ fun ReceiverScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column {
-                            FrequencyDisplay(st.vfoHz, 24.sp, onTune)
+                            FrequencyDisplay(shownVfo, 24.sp, tuneTo)
                             LevelLine(st)
                         }
                         Spacer(Modifier.width(6.dp))
@@ -257,10 +281,10 @@ private fun PlayButton(st: Status, onPlay: () -> Unit) {
 }
 
 @Composable
-private fun TopBar(st: Status, muted: Boolean, onMute: () -> Unit, onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit) {
+private fun TopBar(st: Status, vfo: Double, muted: Boolean, onMute: () -> Unit, onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit) {
     Row(Modifier.fillMaxWidth().background(Panel).padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            FrequencyDisplay(st.vfoHz, 24.sp, onTune)
+            FrequencyDisplay(vfo, 24.sp, onTune)
             LevelLine(st)
             val src = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
             if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1)
