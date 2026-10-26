@@ -5,15 +5,16 @@ its Doppler shift, and a Look4Sat-style radar turns with your phone so you can p
 Made for classrooms first: it runs without hardware (a simulated RTL-SDR with a simulated pass),
 and decoders are small plugins that students can write.
 
-## Features (0.1)
+## Features (0.2 beta)
 
 - **Satellites**: SatNOGS DB and CelesTrak data, pass prediction (SGP4, checked against Skyfield), filters by band, mode, status; favourites and Hungarian satellites first.
 - **Doppler tracking**: tunes to the selected downlink and follows it. Your own retuning is kept as an offset (linear transponders).
 - **Radar**: the whole pass with AOS/LOS times, the satellite, others overhead. A compass mode follows the phone; aim mode guides you to the satellite.
-- **Receiver**: GPU spectrum and waterfall, NFM / WFM / AM / USB / LSB / CW, pinch zoom, drag to tune.
+- **Receiver**: GPU spectrum and waterfall, NFM / WFM / AM / USB / LSB / CW, pinch zoom, drag to tune, full-screen mode with floating controls that fade away.
+- **SDRs**: RTL-SDR and ESP32-S3 (ESP-SDR firmware, 2204–2804 MHz, smooth in-stream tuning), plug and play over USB OTG.
 - **Demo source**: FM broadcast, airband, APRS, a CW beacon, ISM bursts and the selected satellite at its real Doppler frequency, with "Simulate this pass now".
 
-Coming next: RTL-SDR and ESP32-S3 (ESP-SDR) drivers, decoder plugins (AX.25 / APRS first), more sources.
+Coming next: decoder plugins (AX.25 / APRS first), the ESP-SDR wideband spectrum mode and firmware updater, rtl_tcp, more sources.
 
 ## Layout
 

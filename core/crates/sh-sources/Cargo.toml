@@ -10,3 +10,5 @@ repository.workspace = true
 sh-dsp = { path = "../sh-dsp" }
 thiserror.workspace = true
 log.workspace = true
+nusb = "0.2"
+rtl-sdr-rs = "0.4"

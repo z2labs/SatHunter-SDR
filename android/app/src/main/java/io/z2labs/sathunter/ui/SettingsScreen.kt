@@ -52,23 +52,35 @@ fun SettingsScreen(
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
         Section("Receiver")
-        Text("Source: ${if (st.source == "demo") "Demo (simulated RTL-SDR)" else st.source}", fontSize = 14.sp)
-        Text("RTL-SDR and ESP32-S3 (ESP-SDR) drivers come in the next versions.", color = Dim, fontSize = 12.sp)
+        Text("Source", fontSize = 14.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((id, name) in listOf("demo" to "Demo", "rtl" to "RTL-SDR", "esp" to "ESP-SDR (ESP32-S3)")) {
+                FilterChip(
+                    selected = st.source == id, onClick = { engine.source(id) }, enabled = id == "demo" || id in st.devices,
+                    label = { Text(name) },
+                )
+            }
+        }
+        Text(
+            if (st.sourceStatus.isNotEmpty()) st.sourceStatus else "Plug in an RTL-SDR or an ESP32-S3 (its native USB port) with an OTG cable.",
+            color = Dim, fontSize = 12.sp,
+        )
         Text("Sample rate", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (r in listOf(2_400_000.0, 2_048_000.0, 1_024_000.0, 250_000.0)) {
-                FilterChip(selected = st.rate == r, onClick = { engine.rate(r) }, label = { Text("%.3f MS/s".format(r / 1e6)) })
+            for (r in st.rates.ifEmpty { listOf(2_400_000.0, 2_048_000.0, 1_024_000.0, 250_000.0) }) {
+                FilterChip(selected = st.rate == r, onClick = { engine.rate(r) }, label = { Text(if (r >= 1e6) "%.3f MS/s".format(r / 1e6) else "%.1f kS/s".format(r / 1e3)) })
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
             Text("Automatic gain", Modifier.weight(1f), fontSize = 14.sp)
-            Switch(checked = st.gain == null, onCheckedChange = { engine.gain(if (it) null else 25.4) })
+            Switch(checked = st.gain == null, onCheckedChange = { engine.gain(if (it) null else if (st.source == "esp") 60.0 else 25.4) })
         }
         if (st.gain != null) {
             var g by remember(st.gain) { mutableFloatStateOf(st.gain.toFloat()) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("%.1f dB".format(g), Modifier.width(70.dp), fontSize = 14.sp)
-                Slider(value = g, onValueChange = { g = it }, valueRange = 0f..49.6f, onValueChangeFinished = { engine.gain(g.toDouble()) })
+                val gmax = (st.gains.maxOrNull() ?: 49.6).toFloat().coerceAtLeast(1f)
+                Slider(value = g.coerceIn(0f, gmax), onValueChange = { g = it }, valueRange = 0f..gmax, onValueChangeFinished = { engine.gain(g.toDouble()) })
             }
         }
         Text("FFT size", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))

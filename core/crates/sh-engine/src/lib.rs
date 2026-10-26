@@ -61,7 +61,16 @@ enum Work {
     Recalc,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+struct UsbDev {
+    kind: &'static str,
+    vid: u16,
+    pid: u16,
+    fd: Option<i32>,
+}
+
 struct Inner {
+    devices: Mutex<Vec<UsbDev>>,
     dir: PathBuf,
     cfg: Mutex<Config>,
     source: Mutex<Option<Box<dyn Source>>>,
@@ -146,6 +155,11 @@ enum Cmd {
     Status,
     Messages,
     Config,
+    /// Android: a USB SDR was plugged in and permitted (fd from UsbDeviceConnection)
+    UsbAttach { fd: Option<i32>, vid: u16, pid: u16 },
+    UsbDetach { vid: u16, pid: u16 },
+    /// Choose the source: demo, rtl, esp
+    Source { id: String },
 }
 
 impl Engine {
@@ -178,6 +192,7 @@ impl Engine {
             time_shift: Mutex::new((0.0, 0.0)),
             work: Mutex::new(wtx),
             messages: Mutex::new(VecDeque::new()),
+            devices: Mutex::new(Vec::new()),
             cfg: Mutex::new(cfg),
         });
         {
@@ -407,6 +422,46 @@ impl Engine {
             Cmd::Status => Ok(status(i)),
             Cmd::Messages => Ok(json!({ "messages": lock(&i.messages).iter().cloned().collect::<Vec<_>>() })),
             Cmd::Config => serde_json::to_value(lock(&i.cfg).clone()).map_err(|e| e.to_string()),
+            Cmd::UsbAttach { fd, vid, pid } => {
+                let kind = if (vid, pid) == sh_sources::usb::ESP32S3_JTAG {
+                    "esp"
+                } else if sh_sources::usb::is_rtl(vid, pid) {
+                    "rtl"
+                } else {
+                    return Err(format!("unknown USB device {vid:04x}:{pid:04x}"));
+                };
+                {
+                    let mut d = lock(&i.devices);
+                    d.retain(|x| x.kind != kind);
+                    d.push(UsbDev { kind, vid, pid, fd });
+                }
+                i.note(format!("USB: {kind} {vid:04x}:{pid:04x} plugged in"));
+                if lock(&i.cfg).usb_autostart {
+                    switch_source(i, kind)?;
+                }
+                Ok(json!({ "source": kind }))
+            }
+            Cmd::UsbDetach { vid, pid } => {
+                let gone: Vec<UsbDev> = {
+                    let mut d = lock(&i.devices);
+                    let g = d.iter().filter(|x| x.vid == vid && x.pid == pid).cloned().collect();
+                    d.retain(|x| !(x.vid == vid && x.pid == pid));
+                    g
+                };
+                let cur = lock(&i.cfg).source.clone();
+                if gone.iter().any(|g| g.kind == cur) {
+                    i.note(format!("USB: {cur} unplugged"));
+                    stop(i);
+                    if lock(&i.cfg).demo_when_no_device {
+                        switch_source(i, "demo")?;
+                    }
+                }
+                Ok(json!({}))
+            }
+            Cmd::Source { id } => {
+                switch_source(i, &id)?;
+                Ok(json!({}))
+            }
         }
     }
 }
@@ -427,11 +482,52 @@ impl Drop for Engine {
 // ---------------------------------------------------------------------------------------------
 // Source and tuning
 
+fn usb_id(i: &Inner, kind: &str) -> sh_sources::usb::UsbId {
+    let d = lock(&i.devices).iter().find(|d| d.kind == kind).copied();
+    match (d, kind) {
+        (Some(d), _) => sh_sources::usb::UsbId { vid: d.vid, pid: d.pid, fd: d.fd },
+        // Desktop: found by vendor / product ID
+        (None, "esp") => sh_sources::usb::UsbId { vid: 0x303a, pid: 0x1001, fd: None },
+        (None, _) => sh_sources::usb::UsbId { vid: 0x0bda, pid: 0x2838, fd: None },
+    }
+}
+
 fn make_source(i: &Inner, id: &str) -> Result<Box<dyn Source>, String> {
     match id {
         "demo" => Ok(Box::new(DemoSource::new(i.sat_signal.clone()))),
-        other => Err(format!("source {other} is not available yet")),
+        "rtl" => Ok(Box::new(sh_sources::rtl::RtlSource::new(usb_id(i, "rtl")))),
+        "esp" => Ok(Box::new(sh_sources::esp::EspSource::new(usb_id(i, "esp")))),
+        other => Err(format!("unknown source {other}")),
     }
+}
+
+/// Change the source, keeping each source's own last frequency (the ESP-SDR only covers
+/// 2204-2804 MHz), and start it.
+fn switch_source(i: &Arc<Inner>, id: &str) -> Result<(), String> {
+    let info = make_source(i, id)?.info();
+    stop(i);
+    {
+        let mut c = lock(&i.cfg);
+        let old = c.source.clone();
+        let v = c.vfo_hz;
+        c.freqs.insert(old, v);
+        let def = if id == "esp" { 2_450_000_000.0 } else { 100_000_000.0 };
+        let mut f = c.freqs.get(id).copied().unwrap_or(def);
+        if !(info.min_hz..=info.max_hz).contains(&f) {
+            f = def;
+        }
+        c.source = id.to_string();
+        c.vfo_hz = f;
+        c.center_hz = f - 0.2 * if info.sample_rates.contains(&c.rate) { c.rate } else { info.sample_rates[0] };
+        c.center_hz = c.center_hz.clamp(info.min_hz, info.max_hz);
+        if !info.sample_rates.contains(&c.rate) {
+            c.rate = info.sample_rates[0];
+        }
+    }
+    let vfo = lock(&i.cfg).vfo_hz;
+    i.bump_params(|p| p.vfo_hz = vfo);
+    i.save();
+    start(i)
 }
 
 fn start(i: &Arc<Inner>) -> Result<(), String> {
@@ -888,6 +984,11 @@ fn status(i: &Inner) -> Value {
         "spectrum_center_hz": o.center_hz,
         "spectrum_rate": o.rate,
         "dropped": dropped,
+        "source_status": lock(&i.source).as_ref().map(|s| s.status()).unwrap_or_default(),
+        "source_name": lock(&i.source).as_ref().map(|s| s.info().name).unwrap_or_default(),
+        "devices": lock(&i.devices).iter().map(|d| d.kind).collect::<Vec<_>>(),
+        "source_rates": lock(&i.source).as_ref().map(|s| s.info().sample_rates).unwrap_or_default(),
+        "source_gains": lock(&i.source).as_ref().map(|s| s.info().gains).unwrap_or_default(),
         "time_shift": shift,
         "station": c.station,
         "locator": locator::from_lat_lon(c.station.lat, c.station.lon),

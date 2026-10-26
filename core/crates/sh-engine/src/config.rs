@@ -30,6 +30,10 @@ pub struct Config {
     pub selected_tx: Option<String>,
     /// Start in the demo source when no SDR is plugged in
     pub demo_when_no_device: bool,
+    /// Switch to an SDR when one is plugged in
+    pub usb_autostart: bool,
+    /// Last VFO frequency per source ("demo", "rtl", "esp")
+    pub freqs: std::collections::BTreeMap<String, f64>,
 }
 
 impl Default for Config {
@@ -55,6 +59,8 @@ impl Default for Config {
             selected: None,
             selected_tx: None,
             demo_when_no_device: true,
+            usb_autostart: true,
+            freqs: Default::default(),
         }
     }
 }

@@ -2,6 +2,7 @@ package io.z2labs.sathunter
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -32,6 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import io.z2labs.sathunter.ui.Bg
 import io.z2labs.sathunter.ui.ReceiverScreen
 import io.z2labs.sathunter.ui.SatHunterTheme
@@ -43,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private val audio = AudioOut()
     private lateinit var compass: Compass
     private lateinit var gps: Gps
+    private lateinit var usb: UsbSdrs
     private val prefs by lazy { getSharedPreferences("ui", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +59,25 @@ class MainActivity : ComponentActivity() {
             engine.gps(l.latitude, l.longitude, if (l.hasAltitude()) l.altitude else 0.0)
             compass.setPosition(l.latitude, l.longitude, l.altitude)
         }
+        usb = UsbSdrs(this, engine)
+        usb.register()
         setContent { SatHunterTheme { App() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        usb.handleIntent(intent)
+    }
+
+    /** Full screen: system bars away (a swipe from the edge shows them for a moment). */
+    private fun immersive(on: Boolean) {
+        val c = WindowCompat.getInsetsController(window, window.decorView)
+        if (on) {
+            c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            c.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            c.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     override fun onResume() {
@@ -72,6 +95,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        usb.unregister()
         audio.stop()
         super.onDestroy()
     }
@@ -92,13 +116,16 @@ class MainActivity : ComponentActivity() {
         var muted by remember { mutableStateOf(false) }
         var compassOn by remember { mutableStateOf(prefs.getBoolean("compass", true)) }
         var radarOn by remember { mutableStateOf(prefs.getBoolean("radar", true)) }
+        var fullscreen by remember { mutableStateOf(prefs.getBoolean("fullscreen", false)) }
         val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
             if (r.values.any { it }) gps.start()
         }
 
-        // First start: play right away (the demo source when no SDR is plugged in)
+        // Start right away: a permitted USB SDR switches over by itself, otherwise the demo source
         LaunchedEffect(Unit) {
-            if (prefs.getBoolean("autostart", true)) engine.start()
+            val sdrReady = usb.scan()
+            usb.handleIntent(intent)
+            if (!sdrReady) engine.source("demo")
             if (st.followGps && !hasLocation()) {
                 askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             }
@@ -106,6 +133,8 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(st.running) { if (st.running) audio.start() else audio.stop() }
         LaunchedEffect(tab) { engine.wantList = tab == 1; if (tab == 1) engine.refreshList() }
         LaunchedEffect(muted) { audio.muted = muted }
+        val full = fullscreen && tab == 0
+        LaunchedEffect(full) { immersive(full) }
 
         fun setCompass(on: Boolean) {
             compassOn = on
@@ -116,7 +145,7 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             containerColor = Bg,
             bottomBar = {
-                NavigationBar {
+                if (!full) NavigationBar {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Filled.Radio, null) }, label = { Text("Receiver") })
                     NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Icon(Icons.Filled.SatelliteAlt, null) }, label = { Text("Satellites") })
                     NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
@@ -127,6 +156,8 @@ class MainActivity : ComponentActivity() {
                 when (tab) {
                     0 -> ReceiverScreen(
                         st = st, detail = detail, pose = pose, compassOn = compassOn, radarOn = radarOn, muted = muted,
+                        fullscreen = full,
+                        onFullscreen = { fullscreen = it; prefs.edit().putBoolean("fullscreen", it).apply() },
                         onPlay = { if (st.running) engine.stop() else engine.start() },
                         onMute = { muted = !muted },
                         onTune = { engine.tuneSmooth(it) },
