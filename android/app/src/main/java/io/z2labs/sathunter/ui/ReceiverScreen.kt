@@ -188,7 +188,7 @@ fun ReceiverScreen(
 
             if (fullscreen) {
                 // Floating frequency, transport and modes over the waterfall
-                AnimatedVisibility(controlsVisible, Modifier.align(Alignment.TopCenter), enter = fadeIn(), exit = fadeOut()) {
+                Fade(controlsVisible, Modifier.align(Alignment.TopCenter)) {
                     Row(
                         Modifier.padding(top = 10.dp).background(Glass, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -205,7 +205,7 @@ fun ReceiverScreen(
                         IconButton(onClick = { onFullscreen(false) }) { Icon(Icons.Filled.FullscreenExit, "Exit full screen") }
                     }
                 }
-                AnimatedVisibility(controlsVisible, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
+                Fade(controlsVisible, Modifier.align(Alignment.BottomCenter)) {
                     ModeRow(st, onMode, Modifier.padding(bottom = 12.dp).background(Glass, RoundedCornerShape(18.dp)))
                 }
             }
@@ -220,6 +220,12 @@ fun ReceiverScreen(
 
         if (!fullscreen) ModeRow(st, onMode, Modifier.fillMaxWidth().background(Panel))
     }
+}
+
+/** Fade in / out (outside any layout scope, so the plain AnimatedVisibility is used). */
+@Composable
+private fun Fade(visible: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    AnimatedVisibility(visible = visible, modifier = modifier, enter = fadeIn(), exit = fadeOut()) { content() }
 }
 
 @Composable
