@@ -1,7 +1,15 @@
-# SatHunterSDR 0.2.0 beta 2
+# SatHunterSDR 0.2.0 beta 3
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
+
+**Coming from beta 1 or beta 2: uninstall the old app once** (Android says it "conflicts with an
+existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
+with the same Z2Labs key and installs over the previous one.
+
+## New in beta 3
+
+- Fixed release signature, updates install in place.
 
 ## New in beta 2
 

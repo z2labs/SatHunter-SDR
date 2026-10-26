@@ -61,7 +61,18 @@ jobs:
           fi
       - name: Build the APK
         working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+            echo "Signing with the release key"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            echo "::error title=Signing::release_tag set but the ANDROID_KEYSTORE_B64 secret is missing"
+            exit 1
+          fi
           chmod +x gradlew
           set -o pipefail
           if ! ./gradlew --no-daemon assembleRelease 2>&1 | tee gradle.log; then

@@ -14,8 +14,8 @@ android {
         applicationId = "io.z2labs.sathunter"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0-beta2"
+        versionCode = 4
+        versionName = "0.2.0-beta3"
         buildConfigField("String", "GIT_REV", "\"$gitRev\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
@@ -28,11 +28,22 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // Release key from CI secrets (ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD): every APK
+    // gets the same signature, so a new build installs over the old one. Without it (forks,
+    // local builds) the debug key is used.
+    val releaseKs = System.getenv("ANDROID_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (releaseKs != null) create("release") {
+            storeFile = releaseKs
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "sathunter"
+            keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key until a release key is set up
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKs != null) "release" else "debug")
         }
     }
     packaging { jniLibs { useLegacyPackaging = false } }
