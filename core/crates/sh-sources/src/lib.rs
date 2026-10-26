@@ -8,6 +8,9 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 
 pub mod demo;
+pub mod esp;
+pub mod rtl;
+pub mod usb;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
@@ -78,6 +81,10 @@ pub trait Source: Send {
     fn sample_rate(&self) -> f64;
     /// None = automatic gain
     fn set_gain(&mut self, db: Option<f32>) -> Result<(), SourceError>;
+    /// Device details or the last error, for the UI
+    fn status(&self) -> String {
+        String::new()
+    }
 }
 
 /// What the Cubesat Hunter says the selected satellite is sending right now (as received here,

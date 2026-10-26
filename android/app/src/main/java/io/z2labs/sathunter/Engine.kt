@@ -31,6 +31,11 @@ data class Status(
     val altM: Double = 120.0,
     val locator: String = "",
     val followGps: Boolean = true,
+    val sourceName: String = "",
+    val sourceStatus: String = "",
+    val devices: List<String> = emptyList(),
+    val rates: List<Double> = emptyList(),
+    val gains: List<Double> = emptyList(),
 )
 
 data class PassInfo(
@@ -209,6 +214,9 @@ class Engine(dataDir: String) {
     }
 
     fun start() = async("start")
+    fun source(id: String) = async("source", JSONObject().put("id", id))
+    fun usbAttach(fd: Int, vid: Int, pid: Int) = async("usb_attach", JSONObject().put("fd", fd).put("vid", vid).put("pid", pid))
+    fun usbDetach(vid: Int, pid: Int) = async("usb_detach", JSONObject().put("vid", vid).put("pid", pid))
     fun stop() = async("stop")
     fun tune(hz: Double) = async("tune", JSONObject().put("hz", hz))
     fun mode(m: String) = async("mode", JSONObject().put("mode", m))
@@ -255,6 +263,11 @@ class Engine(dataDir: String) {
             altM = st?.optDouble("alt_m") ?: 120.0,
             locator = j.optString("locator"),
             followGps = j.optBoolean("follow_gps", true),
+            sourceName = j.optString("source_name"),
+            sourceStatus = j.optString("source_status"),
+            devices = j.optJSONArray("devices")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
+            rates = j.optJSONArray("source_rates")?.let { a -> (0 until a.length()).map { a.getDouble(it) } } ?: emptyList(),
+            gains = j.optJSONArray("source_gains")?.let { a -> (0 until a.length()).map { a.getDouble(it) } } ?: emptyList(),
         )
     }
 
