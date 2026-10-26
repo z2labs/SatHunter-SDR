@@ -81,6 +81,13 @@ pub trait Source: Send {
     fn sample_rate(&self) -> f64;
     /// None = automatic gain
     fn set_gain(&mut self, db: Option<f32>) -> Result<(), SourceError>;
+    /// The receiver can power an LNA / active antenna through its input (bias tee)
+    fn has_bias_tee(&self) -> bool {
+        false
+    }
+    fn set_bias_tee(&mut self, _on: bool) -> Result<(), SourceError> {
+        Err(SourceError::Device("this receiver has no bias tee".into()))
+    }
     /// Device details or the last error, for the UI
     fn status(&self) -> String {
         String::new()

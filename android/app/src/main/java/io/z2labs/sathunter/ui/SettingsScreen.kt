@@ -90,6 +90,18 @@ fun SettingsScreen(
                 Slider(value = g.coerceIn(0f, gmax), onValueChange = { g = it }, valueRange = 0f..gmax, onValueChangeFinished = { engine.gain(g.toDouble()) })
             }
         }
+        if (st.hasBiasTee) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Bias tee (4.5 V to the antenna)", fontSize = 14.sp)
+                    Text(
+                        "Powers an LNA or active antenna through the coax. Only switch it on when one is connected: a DC-shorted antenna or a device without a DC block can be damaged.",
+                        color = Dim, fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = st.biasTee, onCheckedChange = { engine.biasTee(it) })
+            }
+        }
         Text("FFT size", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (n in listOf(1024, 2048, 4096, 8192)) {

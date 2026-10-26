@@ -1,4 +1,4 @@
-# SatHunterSDR 0.2.0 beta 5
+# SatHunterSDR 0.2.0 beta 6
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
@@ -6,6 +6,11 @@ file manager when asked).
 **Coming from beta 1 or beta 2: uninstall the old app once** (Android says it "conflicts with an
 existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
 with the same Z2Labs key and installs over the previous one.
+
+## New in beta 6
+
+- **Bias tee** for the RTL-SDR (Settings → Receiver): 4.5 V on the antenna input to power an LNA
+  or active antenna. Remembered; the status line says "bias tee ON" while it is on.
 
 ## New in beta 5
 
