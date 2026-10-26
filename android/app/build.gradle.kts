@@ -14,8 +14,8 @@ android {
         applicationId = "io.z2labs.sathunter"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.0-beta5"
+        versionCode = 7
+        versionName = "0.2.0-beta6"
         buildConfigField("String", "GIT_REV", "\"$gitRev\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }

@@ -34,6 +34,8 @@ pub struct Config {
     pub usb_autostart: bool,
     /// VFO stays in the middle of the span, tuning moves the hardware
     pub center_tuning: bool,
+    /// Power an LNA / active antenna through the RTL-SDR input (4.5 V)
+    pub bias_tee: bool,
     /// Last VFO frequency per source ("demo", "rtl", "esp")
     pub freqs: std::collections::BTreeMap<String, f64>,
 }
@@ -63,6 +65,7 @@ impl Default for Config {
             demo_when_no_device: true,
             usb_autostart: true,
             center_tuning: false,
+            bias_tee: false,
             freqs: Default::default(),
         }
     }

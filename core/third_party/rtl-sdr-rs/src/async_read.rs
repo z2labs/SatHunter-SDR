@@ -27,6 +27,8 @@ pub enum AsyncReadConfigChange {
     CenterFrequency(u32),
     TunerGain(TunerGain),
     SampleRate(u32),
+    /// SatHunterSDR patch: bias tee (GPIO 0) on / off while streaming
+    BiasTee(bool),
 }
 
 /// An item produced by an owned asynchronous reader.
@@ -75,6 +77,11 @@ impl AsyncReadControlHandle {
     /// Changes the sample rate and returns the new stream generation.
     pub fn set_sample_rate(&self, sample_rate: u32) -> Result<u64> {
         self.send(AsyncReadConfigChange::SampleRate(sample_rate))
+    }
+
+    /// Switches the bias tee (4.5 V on the antenna input) while streaming.
+    pub fn set_bias_tee(&self, on: bool) -> Result<u64> {
+        self.send(AsyncReadConfigChange::BiasTee(on))
     }
 
     /// Requests streaming shutdown.
@@ -409,6 +416,7 @@ fn apply_change(sdr: &mut RtlSdr, change: &AsyncReadConfigChange) -> Result<()> 
         AsyncReadConfigChange::CenterFrequency(frequency) => sdr.set_center_freq(*frequency),
         AsyncReadConfigChange::TunerGain(gain) => sdr.set_tuner_gain(gain.clone()),
         AsyncReadConfigChange::SampleRate(sample_rate) => sdr.set_sample_rate(*sample_rate),
+        AsyncReadConfigChange::BiasTee(on) => sdr.set_bias_tee(*on),
     }
 }
 

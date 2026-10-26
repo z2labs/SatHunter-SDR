@@ -22,6 +22,8 @@ struct Shared {
     gain: Mutex<Option<f32>>,
     pending_freq: AtomicBool,
     pending_gain: AtomicBool,
+    bias: AtomicBool,
+    pending_bias: AtomicBool,
     run: AtomicBool,
     status: Mutex<String>,
 }
@@ -42,6 +44,8 @@ impl RtlSource {
                 gain: Mutex::new(None),
                 pending_freq: AtomicBool::new(false),
                 pending_gain: AtomicBool::new(false),
+                bias: AtomicBool::new(false),
+                pending_bias: AtomicBool::new(false),
                 run: AtomicBool::new(false),
                 status: Mutex::new(String::new()),
             }),
@@ -115,13 +119,14 @@ impl Agc {
     }
 }
 
-fn status_line(tuner: &str, v4: bool, rate: f64, gain: Option<f32>, agc: &Agc) -> String {
+fn status_line(tuner: &str, v4: bool, rate: f64, gain: Option<f32>, agc: &Agc, bias: bool) -> String {
     let v4 = if v4 { " (RTL-SDR Blog V4)" } else { "" };
     let g = match gain {
         Some(g) => format!("{g:.1} dB"),
         None => format!("auto {:.1} dB", agc.db()),
     };
-    format!("tuner {tuner}{v4}, {:.3} MS/s, gain {g}", rate / 1e6)
+    let b = if bias { ", bias tee ON" } else { "" };
+    format!("tuner {tuner}{v4}, {:.3} MS/s, gain {g}{b}", rate / 1e6)
 }
 
 fn set_status(sh: &Shared, s: String) {
@@ -151,6 +156,7 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
         sdr.set_sample_rate(rate as u32).map_err(|e| format!("sample rate: {e:?}"))?;
         sdr.set_center_freq(center as u32).map_err(|e| format!("frequency: {e:?}"))?;
         sdr.set_tuner_gain(manual(gain.unwrap_or(GAINS[Agc::START]))).map_err(|e| format!("gain: {e:?}"))?;
+        sdr.set_bias_tee(sh.bias.load(Ordering::SeqCst)).map_err(|e| format!("bias tee: {e:?}"))?;
         sdr.reset_buffer().map_err(|e| format!("reset: {e:?}"))?;
         Ok(())
     })();
@@ -162,7 +168,8 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     let mut gain = gain;
     let mut agc = Agc::new();
     let window = (rate * 0.1) as usize; // one decision per 100 ms
-    set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
+    set_status(&sh, status_line(&tuner, v4, rate, gain, &agc, sh.bias.load(Ordering::SeqCst)));
+    sh.pending_bias.store(false, Ordering::SeqCst);
     sh.pending_freq.store(false, Ordering::SeqCst);
     sh.pending_gain.store(false, Ordering::SeqCst);
     // 32 kB transfers: ~7 ms at 2.4 MS/s, low latency for the waterfall
@@ -183,7 +190,14 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
             gain = *sh.gain.lock().unwrap_or_else(|e| e.into_inner());
             agc = Agc::new();
             let _ = ctl.set_tuner_gain(manual(gain.unwrap_or(agc.db())));
-            set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
+            set_status(&sh, status_line(&tuner, v4, rate, gain, &agc, sh.bias.load(Ordering::SeqCst)));
+        }
+        if sh.pending_bias.swap(false, Ordering::SeqCst) {
+            let on = sh.bias.load(Ordering::SeqCst);
+            match ctl.set_bias_tee(on) {
+                Ok(_) => set_status(&sh, status_line(&tuner, v4, rate, gain, &agc, on)),
+                Err(e) => fail(format!("bias tee: {e:?}")),
+            }
         }
         match reader.try_recv() {
             None => std::thread::sleep(Duration::from_millis(2)),
@@ -196,7 +210,7 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
                 if gain.is_none() {
                     if let Some(db) = agc.feed(&data, window) {
                         let _ = ctl.set_tuner_gain(manual(db));
-                        set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
+                        set_status(&sh, status_line(&tuner, v4, rate, gain, &agc, sh.bias.load(Ordering::SeqCst)));
                     }
                 }
                 out.clear();
@@ -265,6 +279,16 @@ impl Source for RtlSource {
     fn set_gain(&mut self, db: Option<f32>) -> Result<(), SourceError> {
         *self.shared.gain.lock().unwrap_or_else(|e| e.into_inner()) = db;
         self.shared.pending_gain.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn has_bias_tee(&self) -> bool {
+        true
+    }
+
+    fn set_bias_tee(&mut self, on: bool) -> Result<(), SourceError> {
+        self.shared.bias.store(on, Ordering::SeqCst);
+        self.shared.pending_bias.store(true, Ordering::SeqCst);
         Ok(())
     }
 

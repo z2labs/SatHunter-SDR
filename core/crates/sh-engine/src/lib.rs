@@ -135,6 +135,8 @@ enum Cmd {
     Mode { mode: String, bw: Option<f64> },
     Bandwidth { hz: f64 },
     Gain { db: Option<f32> },
+    /// 4.5 V on the antenna input for an LNA (RTL-SDR)
+    BiasTee { on: bool },
     Rate { hz: f64 },
     Fft { size: usize },
     Squelch { db: Option<f32> },
@@ -325,6 +327,16 @@ impl Engine {
                 let hz = hz.clamp(100.0, 250_000.0);
                 lock(&i.cfg).bw = hz;
                 i.bump_params(|p| p.bw = hz);
+                i.save();
+                Ok(json!({}))
+            }
+            Cmd::BiasTee { on } => {
+                lock(&i.cfg).bias_tee = on;
+                if let Some(s) = lock(&i.source).as_mut() {
+                    if s.has_bias_tee() {
+                        s.set_bias_tee(on).map_err(|e| e.to_string())?;
+                    }
+                }
                 i.save();
                 Ok(json!({}))
             }
@@ -580,6 +592,9 @@ fn start(i: &Arc<Inner>) -> Result<(), String> {
     let center = c.center_hz.clamp(info.min_hz, info.max_hz);
     src.set_frequency(center).map_err(|e| e.to_string())?;
     src.set_gain(c.gain).map_err(|e| e.to_string())?;
+    if src.has_bias_tee() {
+        src.set_bias_tee(c.bias_tee).map_err(|e| e.to_string())?;
+    }
     let (sink, rx, dropped) = Sink::new(32);
     src.start(sink).map_err(|e| e.to_string())?;
     {
@@ -1019,6 +1034,8 @@ fn status(i: &Inner) -> Value {
         "center_hz": c.center_hz,
         "vfo_hz": c.vfo_hz,
         "center_tuning": c.center_tuning,
+        "bias_tee": c.bias_tee,
+        "has_bias_tee": c.source == "rtl",
         "rate": c.rate,
         "mode": c.mode,
         "bw": c.bw,
