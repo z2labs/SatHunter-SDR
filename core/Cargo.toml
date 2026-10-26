@@ -23,3 +23,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "unwind"
+
+[patch.crates-io]
+# rtl-sdr-rs with the Android build fix (third_party/rtl-sdr-rs/PATCHES.md)
+rtl-sdr-rs = { path = "third_party/rtl-sdr-rs" }

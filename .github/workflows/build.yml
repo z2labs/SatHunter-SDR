@@ -45,12 +45,23 @@ jobs:
         working-directory: core
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
-          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -P 26 -o ../android/app/src/main/jniLibs build --release -p sh-android
+          set -o pipefail
+          if ! cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -P 26 -o ../android/app/src/main/jniLibs build --release -p sh-android 2>&1 | tee build.log; then
+            # Errors as an annotation, readable without the log download
+            msg=$(grep -E "^(error|warning: unused)" -A12 build.log | head -c 3500 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=Rust Android build::$msg"
+            exit 1
+          fi
       - name: Build the APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
+          set -o pipefail
+          if ! ./gradlew --no-daemon assembleRelease 2>&1 | tee gradle.log; then
+            msg=$(grep -E "^e: |error:|What went wrong" -A6 gradle.log | head -c 3500 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=Gradle build::$msg"
+            exit 1
+          fi
           cp app/build/outputs/apk/release/app-release.apk ../SatHunterSDR.apk
       - uses: actions/upload-artifact@v4
         with:
