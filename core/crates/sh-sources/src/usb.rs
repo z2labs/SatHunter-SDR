@@ -36,12 +36,20 @@ pub fn open(id: &UsbId) -> Result<Device, SourceError> {
         let owned = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned().map_err(err)?;
         return Device::from_fd(owned).wait().map_err(err);
     }
-    let info = nusb::list_devices()
-        .wait()
-        .map_err(err)?
-        .find(|d| d.vendor_id() == id.vid && d.product_id() == id.pid)
-        .ok_or(SourceError::NotFound)?;
-    info.open().wait().map_err(err)
+    #[cfg(target_os = "android")]
+    {
+        // Android has no USB enumeration for apps: the device comes with its permission's fd
+        Err(SourceError::NotFound)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let info = nusb::list_devices()
+            .wait()
+            .map_err(err)?
+            .find(|d| d.vendor_id() == id.vid && d.product_id() == id.pid)
+            .ok_or(SourceError::NotFound)?;
+        info.open().wait().map_err(err)
+    }
 }
 
 /// CDC-ACM serial port over bulk endpoints.
