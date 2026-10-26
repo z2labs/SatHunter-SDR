@@ -280,6 +280,18 @@ mod tests {
     }
 
     #[test]
+    fn wfm_broadcast_at_2_4_msps() {
+        let fs = 2_400_000.0;
+        let mut d = Demodulator::new(Mode::Wfm, fs, -480_000.0, 180_000.0);
+        let mut audio = Vec::new();
+        d.process(&fm(-480_000.0, 50_000.0, fs, 960_000), &mut audio);
+        let tail = &audio[audio.len() / 2..];
+        assert!((freq(tail, AUDIO_RATE) - 1000.0).abs() < 20.0, "{}", freq(tail, AUDIO_RATE));
+        let peak = tail.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.3, "peak {peak}");
+    }
+
+    #[test]
     fn usb_gives_the_audio_offset() {
         let fs = 240_000.0;
         // Carrier at 10 kHz, a 1.5 kHz USB tone = a single line at 11.5 kHz

@@ -15,6 +15,8 @@ pub struct UsbId {
     pub pid: u16,
     /// Android: file descriptor from UsbDeviceConnection (we duplicate it)
     pub fd: Option<i32>,
+    /// The USB product string says "Blog V4" (RTL-SDR Blog V4: R828D on 28.8 MHz)
+    pub blog_v4: bool,
 }
 
 pub const ESP32S3_JTAG: (u16, u16) = (0x303a, 0x1001);

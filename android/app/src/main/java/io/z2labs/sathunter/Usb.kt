@@ -86,7 +86,8 @@ class UsbSdrs(private val context: Context, private val engine: Engine) {
         val c = um.openDevice(d) ?: run { Log.w("SatHunter", "cannot open ${d.deviceName}"); return }
         open[d.deviceName] = c
         Log.i("SatHunter", "USB %04x:%04x fd %d".format(d.vendorId, d.productId, c.fileDescriptor))
-        engine.usbAttach(c.fileDescriptor, d.vendorId, d.productId)
+        val product = try { d.productName ?: "" } catch (_: Exception) { "" }
+        engine.usbAttach(c.fileDescriptor, d.vendorId, d.productId, product)
     }
 
     private fun closeDevice(d: UsbDevice) {

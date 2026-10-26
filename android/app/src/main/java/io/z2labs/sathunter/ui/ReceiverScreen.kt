@@ -86,7 +86,7 @@ fun ReceiverScreen(
     onPlay: () -> Unit,
     onMute: () -> Unit,
     onTune: (Double) -> Unit,
-    onTuneBy: (Double) -> Unit,
+    onPanHz: (Double) -> Unit,
     onMode: (String) -> Unit,
     onCompass: () -> Unit,
 ) {
@@ -110,7 +110,7 @@ fun ReceiverScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (!fullscreen) TopBar(st, muted, onMute, onPlay) { onFullscreen(true) }
+        if (!fullscreen) TopBar(st, muted, onMute, onPlay, onTune) { onFullscreen(true) }
 
         Box(
             Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
@@ -145,8 +145,15 @@ fun ReceiverScreen(
                                 viewLo = lo
                                 viewHi = lo + ns
                             } else if (pan.x != 0f) {
-                                // One finger: the frequency follows the finger like a dial
-                                onTuneBy(pan.x / size.width * span * s.specRate)
+                                // Drag sweeps the frequency axis (the VFO marker stays put on its
+                                // frequency): first the zoomed view slides inside the captured
+                                // span, past its edges the receiver's centre follows the finger.
+                                val du = -pan.x / size.width * span
+                                val lo = (viewLo + du).coerceIn(0f, 1f - span)
+                                val rest = du - (lo - viewLo)
+                                viewLo = lo
+                                viewHi = lo + span
+                                if (rest != 0f) onPanHz(rest.toDouble() * s.specRate)
                             }
                         }
                     }
@@ -194,7 +201,7 @@ fun ReceiverScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column {
-                            Text(fmtFreq(st.vfoHz), fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                            FrequencyDisplay(st.vfoHz, 24.sp, onTune)
                             LevelLine(st)
                         }
                         Spacer(Modifier.width(6.dp))
@@ -250,10 +257,10 @@ private fun PlayButton(st: Status, onPlay: () -> Unit) {
 }
 
 @Composable
-private fun TopBar(st: Status, muted: Boolean, onMute: () -> Unit, onPlay: () -> Unit, onFullscreen: () -> Unit) {
+private fun TopBar(st: Status, muted: Boolean, onMute: () -> Unit, onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit) {
     Row(Modifier.fillMaxWidth().background(Panel).padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(fmtFreq(st.vfoHz), fontSize = 30.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+            FrequencyDisplay(st.vfoHz, 24.sp, onTune)
             LevelLine(st)
             val src = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
             if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1)

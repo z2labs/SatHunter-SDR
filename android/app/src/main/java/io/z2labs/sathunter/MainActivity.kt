@@ -161,7 +161,7 @@ class MainActivity : ComponentActivity() {
                         onPlay = { if (st.running) engine.stop() else engine.start() },
                         onMute = { muted = !muted },
                         onTune = { engine.tuneSmooth(it) },
-                        onTuneBy = { engine.tuneSmooth(engine.currentVfo() + it) },
+                        onPanHz = { engine.centerSmooth(engine.currentCenter() + it) },
                         onMode = { engine.mode(it) },
                         onCompass = { setCompass(!compassOn) },
                     )
