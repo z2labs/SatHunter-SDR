@@ -41,7 +41,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -89,6 +92,8 @@ fun ReceiverScreen(
     compassOn: Boolean,
     radarOn: Boolean,
     muted: Boolean,
+    volume: Float,
+    onVolume: (Float) -> Unit,
     fullscreen: Boolean,
     onFullscreen: (Boolean) -> Unit,
     onPlay: () -> Unit,
@@ -145,7 +150,7 @@ fun ReceiverScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (!fullscreen) TopBar(st, shownVfo, muted, onMute, onPlay, tuneTo) { onFullscreen(true) }
+        if (!fullscreen) TopBar(st, shownVfo, muted, onMute, volume, onVolume, onPlay, tuneTo) { onFullscreen(true) }
 
         Box(
             Modifier.weight(1f).fillMaxWidth().onSizeChanged { areaH = it.height.coerceAtLeast(1) }.pointerInput(Unit) {
@@ -261,19 +266,15 @@ fun ReceiverScreen(
             if (fullscreen) {
                 // Floating frequency, transport and modes over the waterfall
                 Fade(controlsVisible, Modifier.align(Alignment.TopCenter)) {
-                    Row(
-                        Modifier.padding(top = 6.dp).background(Glass, RoundedCornerShape(14.dp)).padding(horizontal = 10.dp, vertical = 0.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        Modifier.padding(top = 6.dp).width(320.dp).background(Glass, RoundedCornerShape(14.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
-                        Column {
-                            FrequencyDisplay(shownVfo, 21.sp, tuneTo, compact = true)
-                            LevelLine(st)
+                        FrequencyDisplay(shownVfo, tuneTo, Modifier.fillMaxWidth(), tubeHeight = 44.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { LevelLine(st, short = true) }
+                            Volume(muted, onMute, volume, onVolume, Modifier.width(120.dp))
+                            PlayButton(st, onPlay, Modifier.size(36.dp))
                         }
-                        Spacer(Modifier.width(4.dp))
-                        IconButton(onClick = onMute, modifier = Modifier.size(40.dp)) {
-                            Icon(if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, "Mute")
-                        }
-                        PlayButton(st, onPlay, Modifier.size(40.dp))
                     }
                 }
                 // Leaving full screen: its own big button in the corner, away from the others
@@ -308,12 +309,12 @@ private fun Fade(visible: Boolean, modifier: Modifier, content: @Composable () -
 }
 
 @Composable
-private fun LevelLine(st: Status) {
+private fun LevelLine(st: Status, short: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${st.mode}  ${"%.1f".format(st.bw / 1000)} kHz", color = Dim, fontSize = 13.sp)
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
         val lvl = ((st.levelDb + 100) / 80).toFloat().coerceIn(0f, 1f)
-        LinearProgressIndicator(progress = { lvl }, modifier = Modifier.width(90.dp).height(6.dp), color = Up, trackColor = Color(0xFF243040))
+        LinearProgressIndicator(progress = { lvl }, modifier = Modifier.width(if (short) 50.dp else 80.dp).height(6.dp), color = Up, trackColor = Color(0xFF243040))
         if (st.timeShift != 0.0) {
             Spacer(Modifier.width(10.dp))
             Text("SIMULATED", color = SatYellow, fontSize = 12.sp)
@@ -329,19 +330,40 @@ private fun PlayButton(st: Status, onPlay: () -> Unit, modifier: Modifier = Modi
 }
 
 @Composable
-private fun TopBar(st: Status, vfo: Double, muted: Boolean, onMute: () -> Unit, onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit) {
-    Row(Modifier.fillMaxWidth().background(Panel).padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            FrequencyDisplay(vfo, 24.sp, onTune)
-            LevelLine(st)
-            val src = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
-            if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1)
+private fun TopBar(
+    st: Status, vfo: Double, muted: Boolean, onMute: () -> Unit, volume: Float, onVolume: (Float) -> Unit,
+    onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().background(Panel).padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
+        // Nixie tubes over the full width
+        FrequencyDisplay(vfo, onTune, Modifier.fillMaxWidth().padding(end = 4.dp), tubeHeight = 58.dp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                LevelLine(st)
+                val src = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
+                if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Volume(muted, onMute, volume, onVolume, Modifier.width(130.dp))
+            PlayButton(st, onPlay)
+            IconButton(onClick = onFullscreen) { Icon(Icons.Filled.Fullscreen, contentDescription = "Full screen") }
         }
-        IconButton(onClick = onMute) {
-            Icon(if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Mute")
+    }
+}
+
+/** Speaker button (mute) and a volume slider. */
+@Composable
+private fun Volume(muted: Boolean, onMute: () -> Unit, volume: Float, onVolume: (Float) -> Unit, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onMute, modifier = Modifier.size(36.dp)) {
+            Icon(
+                if (muted || volume == 0f) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = "Mute", tint = if (muted) Down else Color(0xFFE3EAF2),
+            )
         }
-        PlayButton(st, onPlay)
-        IconButton(onClick = onFullscreen) { Icon(Icons.Filled.Fullscreen, contentDescription = "Full screen") }
+        Slider(
+            value = volume, onValueChange = onVolume, valueRange = 0f..2f, modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+        )
     }
 }
 

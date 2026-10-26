@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -86,10 +88,13 @@ fun SatScreen(list: SatList, detail: SatDetail?, engine: Engine, radarOn: Boolea
 
         // Order: next pass, or the satellites the SatNOGS ground stations hear best
         Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Order", color = Dim, fontSize = 13.sp)
             for ((id, name) in listOf("pass" to "Next pass", "health" to "Best heard")) {
                 FilterChip(selected = list.filter.sort == id, onClick = { engine.filter(list.filter.copy(sort = id)) }, label = { Text(name) })
             }
+            Text(
+                if (list.filter.sort == "health") "Most reliably received by SatNOGS stations first" else "Soonest pass first",
+                color = Dim, fontSize = 12.sp, maxLines = 2, modifier = Modifier.weight(1f),
+            )
         }
         if (showFilter) FilterPanel(list, engine)
 
@@ -104,55 +109,121 @@ fun SatScreen(list: SatList, detail: SatDetail?, engine: Engine, radarOn: Boolea
                     )
                 }
             }
-            items(list.rows, key = { it.norad }) { r ->
-                SatRowView(r, list.now, selected = detail?.norad == r.norad, onStar = { engine.favourite(r.norad, !r.fav) }) {
-                    engine.select(r.norad)
+            for ((title, rows) in sections(list)) {
+                if (rows.isEmpty()) continue
+                item(key = "h:$title") { SectionHeader(title, rows.size) }
+                items(rows, key = { it.norad }) { r ->
+                    SatRowView(r, list.now, selected = detail?.norad == r.norad, onStar = { engine.favourite(r.norad, !r.fav) }) {
+                        engine.select(r.norad)
+                    }
+                    HorizontalDivider(color = Color(0xFF1B2532))
                 }
-                HorizontalDivider(color = Color(0xFF1B2532))
             }
         }
     }
 }
 
+/**
+ * The list in labelled groups, so it is clear why a satellite is where it is:
+ * your favourites and the Hungarian satellites on top, then (next-pass order) the ones overhead
+ * now, the next two hours and later; or (best-heard order) the rest by SatNOGS reception.
+ */
+private fun sections(list: SatList): List<Pair<String, List<SatRow>>> {
+    val now = list.now
+    fun up(r: SatRow) = r.pass.always || r.pass.aos <= now
+    val byTime = compareBy<SatRow>({ !up(it) }, { it.pass.aos })
+    val pinned = list.rows.filter { it.fav || it.hu }.sortedWith(byTime)
+    val rest = list.rows.filter { !it.fav && !it.hu }
+    if (list.filter.sort == "health") {
+        return listOf("Favourites and Hungarian" to pinned, "Best heard on SatNOGS" to rest)
+    }
+    val sorted = rest.sortedWith(byTime)
+    return listOf(
+        "Favourites and Hungarian" to pinned,
+        "Overhead now" to sorted.filter { up(it) },
+        "Next 2 hours" to sorted.filter { !up(it) && it.pass.aos - now < 7200 },
+        "Later today" to sorted.filter { !up(it) && it.pass.aos - now >= 7200 },
+    )
+}
+
 @Composable
-private fun SatRowView(r: SatRow, now: Double, selected: Boolean, onStar: () -> Unit, onClick: () -> Unit) {
-    val visible = r.pass.aos <= now
+private fun SectionHeader(title: String, n: Int) {
     Row(
-        Modifier.fillMaxWidth().background(if (selected) Color(0xFF1B2A3A) else Color.Transparent).clickable(onClick = onClick)
-            .horizontalScroll(rememberScrollState()).padding(end = 12.dp),
+        Modifier.fillMaxWidth().background(Color(0xFF0E151E)).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onStar) {
-            Icon(if (r.fav) Icons.Filled.Star else Icons.Outlined.StarOutline, contentDescription = "Favourite", tint = if (r.fav) SatYellow else Dim)
-        }
-        Column(Modifier.width(170.dp)) {
+        Text(title.uppercase(), color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Spacer(Modifier.width(8.dp))
+        Text("$n", color = Dim, fontSize = 12.sp)
+    }
+}
+
+/** When the pass is, in plain words */
+private fun passText(r: SatRow, now: Double): String {
+    val p = r.pass
+    val window = "${fmtClock(p.aos)}–${fmtClock(p.los)}"
+    return when {
+        p.always -> "Always above the horizon"
+        p.aos <= now -> "Overhead now · ${minutes(p.los - now)} left"
+        p.aos - now < 3600 -> "In ${minutes(p.aos - now)} · $window"
+        else -> window
+    }
+}
+
+private fun minutes(s: Double): String {
+    val m = (s / 60).toInt().coerceAtLeast(0)
+    return if (m >= 60) "%d h %02d min".format(m / 60, m % 60) else if (m == 0) "<1 min" else "$m min"
+}
+
+@Composable
+private fun SatRowView(r: SatRow, now: Double, selected: Boolean, onStar: () -> Unit, onClick: () -> Unit) {
+    val up = r.pass.always || r.pass.aos <= now
+    Row(
+        Modifier.fillMaxWidth().background(if (selected) Color(0xFF1B2A3A) else Color.Transparent).clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(r.name, color = if (visible) Up else MaterialColors.text, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(r.name, color = MaterialColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (r.hu) {
                     Spacer(Modifier.width(6.dp))
                     Text("HU", fontSize = 10.sp, color = Color(0xFF0A0F16), modifier = Modifier.background(Color(0xFF5AE08C), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp))
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (up) {
+                    Box(Modifier.size(8.dp).background(Up, RoundedCornerShape(4.dp)))
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(passText(r, now), color = if (up) Up else MaterialColors.text, fontSize = 14.sp, maxLines = 1)
+            }
+            if (up && !r.pass.always && r.pass.los > r.pass.aos) {
+                val f = ((now - r.pass.aos) / (r.pass.los - r.pass.aos)).toFloat().coerceIn(0f, 1f)
+                LinearProgressIndicator(progress = { f }, modifier = Modifier.padding(top = 3.dp, bottom = 2.dp).width(160.dp).height(3.dp), color = Up, trackColor = Color(0xFF243040))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 HealthBadge(r)
-                Text(r.modes, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val what = listOf(if (r.freq > 0) "${fmtMhz(r.freq, 3)} MHz" else "", r.modes).filter { it.isNotEmpty() }.joinToString(" · ")
+                Text(what, color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Column(Modifier.width(78.dp)) {
-            Text(
-                when {
-                    r.pass.always -> "always"
-                    visible -> "up ${fmtDuration(r.pass.los - now)}"
-                    r.pass.aos - now < 3600 -> "in ${fmtDuration(r.pass.aos - now)}"
-                    else -> fmtClock(r.pass.aos)
-                },
-                color = if (visible) Up else MaterialColors.text, fontFamily = FontFamily.Monospace, fontSize = 13.sp,
-            )
-            Text("max %.0f°".format(r.pass.maxEl), color = Dim, fontSize = 11.sp)
+        // How high it gets: the higher, the easier to hear
+        if (!r.pass.always) {
+            val el = r.pass.maxEl
+            val c = when {
+                el >= 45 -> Up
+                el >= 20 -> SatYellow
+                else -> Dim
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(56.dp)) {
+                Text("%.0f°".format(el), color = c, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("max", color = Dim, fontSize = 10.sp)
+            }
         }
-        Text(if (r.freq > 0) fmtMhz(r.freq) else "", fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.width(92.dp))
-        if (!r.pass.always) Text("%.0f° → %.0f°".format(r.pass.aosAz, r.pass.losAz), color = Dim, fontSize = 12.sp, modifier = Modifier.width(90.dp))
-        Text(r.bands, color = Dim, fontSize = 12.sp, maxLines = 1)
+        IconButton(onClick = onStar) {
+            Icon(if (r.fav) Icons.Filled.Star else Icons.Outlined.StarOutline, contentDescription = "Favourite", tint = if (r.fav) SatYellow else Dim)
+        }
     }
 }
 
