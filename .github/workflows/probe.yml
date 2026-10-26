@@ -1,0 +1,17 @@
+name: Probe
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        required: true
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sS -D h.txt -o b.txt -m 120 "${{ inputs.url }}" || true
+          h=$(head -c 1500 h.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=headers::$h"
+          echo "::notice title=size::$(wc -c < b.txt) bytes"
+          b=$(head -c 3000 b.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=body::$b"
