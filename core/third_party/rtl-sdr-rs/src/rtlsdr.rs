@@ -38,6 +38,7 @@ pub struct RtlSdr {
     direct_sampling: DirectSampleMode,
     xtal: u32,
     tuner_xtal: u32,
+    blog_v4: bool,
     offset_freq: u32,
     corr: i32, // PPM
     force_bt: bool,
@@ -55,6 +56,7 @@ impl RtlSdr {
             bw: 0,
             xtal: DEF_RTL_XTAL_FREQ,
             tuner_xtal: DEF_RTL_XTAL_FREQ,
+            blog_v4: false,
             direct_sampling: DirectSampleMode::Off,
             offset_freq: 0,
             corr: 0,
@@ -70,14 +72,17 @@ impl RtlSdr {
         self.init_baseband()?;
         self.set_i2c_repeater(true)?;
 
-        let is_blog_v4 = self
-            .handle
-            .usb_strings()
-            .map(|(manufact, product, _)| {
-                matches!(manufact.as_deref(), Some("RTLSDRBlog"))
-                    && matches!(product.as_deref(), Some("Blog V4"))
-            })
-            .unwrap_or(false);
+        let strings = self.handle.usb_strings();
+        info!("USB strings: {:?}", strings);
+        let is_blog_v4 = crate::blog_v4_hint()
+            || strings
+                .map(|(manufact, product, _)| {
+                    matches!(manufact.as_deref(), Some("RTLSDRBlog"))
+                        && matches!(product.as_deref(), Some("Blog V4"))
+                })
+                .unwrap_or(false);
+        info!("RTL-SDR Blog V4: {}", is_blog_v4);
+        self.blog_v4 = is_blog_v4;
 
         let tuner_id = match self.search_tuner() {
             Some(tid) => {
@@ -605,5 +610,9 @@ impl RtlSdr {
 
     pub fn get_tuner_id(&self) -> Result<&str> {
         Ok(self.tuner.get_info()?.id)
+    }
+
+    pub fn is_blog_v4(&self) -> bool {
+        self.blog_v4
     }
 }

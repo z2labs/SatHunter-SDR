@@ -147,9 +147,21 @@ class Engine(dataDir: String) {
     private val tuneReq = MutableStateFlow<Double?>(null)
     @Volatile private var lastTune = 0.0
     @Volatile private var lastTuneAt = 0L
+    // Moving the received span (dragging the spectrum): same scheme for the centre frequency
+    private val centerReq = MutableStateFlow<Double?>(null)
+    @Volatile private var lastCenter = 0.0
+    @Volatile private var lastCenterAt = 0L
 
     init {
         Native.init(dataDir)
+        scope.launch {
+            centerReq.collect { hz ->
+                if (hz != null) {
+                    cmd("center", JSONObject().put("hz", hz))
+                    refreshStatus()
+                }
+            }
+        }
         scope.launch {
             tuneReq.collect { hz ->
                 if (hz != null) {
@@ -163,6 +175,16 @@ class Engine(dataDir: String) {
     /** VFO including a tune request still on its way. */
     fun currentVfo(): Double =
         if (System.currentTimeMillis() - lastTuneAt < 1000) lastTune else _status.value.vfoHz
+
+    /** Hardware centre including a request still on its way. */
+    fun currentCenter(): Double =
+        if (System.currentTimeMillis() - lastCenterAt < 1000) lastCenter else _status.value.centerHz
+
+    fun centerSmooth(hz: Double) {
+        lastCenter = hz
+        lastCenterAt = System.currentTimeMillis()
+        centerReq.value = hz
+    }
 
     fun tuneSmooth(hz: Double) {
         lastTune = hz
@@ -215,7 +237,8 @@ class Engine(dataDir: String) {
 
     fun start() = async("start")
     fun source(id: String) = async("source", JSONObject().put("id", id))
-    fun usbAttach(fd: Int, vid: Int, pid: Int) = async("usb_attach", JSONObject().put("fd", fd).put("vid", vid).put("pid", pid))
+    fun usbAttach(fd: Int, vid: Int, pid: Int, product: String) =
+        async("usb_attach", JSONObject().put("fd", fd).put("vid", vid).put("pid", pid).put("product", product))
     fun usbDetach(vid: Int, pid: Int) = async("usb_detach", JSONObject().put("vid", vid).put("pid", pid))
     fun stop() = async("stop")
     fun tune(hz: Double) = async("tune", JSONObject().put("hz", hz))

@@ -68,6 +68,7 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
         log::warn!("RTL-SDR: {e}");
         set_status(&sh, e);
     };
+    rtl_sdr_rs::set_blog_v4_hint(id.blog_v4);
     let dev = match id.fd {
         Some(fd) => DeviceId::Fd(fd),
         None => DeviceId::Index(0),
@@ -90,7 +91,8 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
         return fail(e);
     }
     let tuner = sdr.get_tuner_id().map(|s| s.to_string()).unwrap_or_else(|_| "?".into());
-    set_status(&sh, format!("RTL-SDR, tuner {tuner}"));
+    let v4 = if sdr.is_blog_v4() { " (RTL-SDR Blog V4)" } else { "" };
+    set_status(&sh, format!("tuner {tuner}{v4}, {:.3} MS/s, gain {}", rate / 1e6, gain.map(|g| format!("{g:.1} dB")).unwrap_or("auto".into())));
     sh.pending_freq.store(false, Ordering::SeqCst);
     sh.pending_gain.store(false, Ordering::SeqCst);
     // 32 kB transfers: ~7 ms at 2.4 MS/s, low latency for the waterfall

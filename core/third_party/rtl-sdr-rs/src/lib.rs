@@ -26,6 +26,19 @@ impl TunerId {
     pub const R828D: &'static str = R828D_TUNER_ID;
 }
 
+/// SatHunterSDR patch: the app knows the USB product strings (Android UsbDevice) even when
+/// reading them over the file descriptor fails; a true hint selects the RTL-SDR Blog V4 setup
+/// (R828D on the 28.8 MHz crystal, V4 input switching).
+static BLOG_V4_HINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_blog_v4_hint(on: bool) {
+    BLOG_V4_HINT.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub(crate) fn blog_v4_hint() -> bool {
+    BLOG_V4_HINT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub const DEFAULT_BUF_LENGTH: usize = 16 * 16384;
 pub const DEFAULT_ASYNC_BUF_NUMBER: usize = 15;
 
@@ -225,6 +238,9 @@ impl RtlSdr {
     }
     pub fn get_tuner_id(&self) -> Result<&str> {
         self.sdr.get_tuner_id()
+    }
+    pub fn is_blog_v4(&self) -> bool {
+        self.sdr.is_blog_v4()
     }
     pub fn list_sensors(&self) -> Result<Vec<Sensor>> {
         Ok(vec![

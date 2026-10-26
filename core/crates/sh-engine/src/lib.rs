@@ -67,6 +67,7 @@ struct UsbDev {
     vid: u16,
     pid: u16,
     fd: Option<i32>,
+    blog_v4: bool,
 }
 
 struct Inner {
@@ -156,7 +157,7 @@ enum Cmd {
     Messages,
     Config,
     /// Android: a USB SDR was plugged in and permitted (fd from UsbDeviceConnection)
-    UsbAttach { fd: Option<i32>, vid: u16, pid: u16 },
+    UsbAttach { fd: Option<i32>, vid: u16, pid: u16, product: Option<String> },
     UsbDetach { vid: u16, pid: u16 },
     /// Choose the source: demo, rtl, esp
     Source { id: String },
@@ -275,8 +276,21 @@ impl Engine {
                 Ok(json!({ "vfo_hz": lock(&i.cfg).vfo_hz }))
             }
             Cmd::Center { hz } => {
-                set_center(i, hz)?;
-                Ok(json!({}))
+                let (min, max) = lock(&i.source).as_ref().map(|s| (s.info().min_hz, s.info().max_hz)).unwrap_or((0.0, f64::MAX));
+                let c = set_center(i, hz.clamp(min, max))?;
+                // The VFO stays where it is unless it would leave the received span: then it is
+                // pushed along at the edge
+                let (rate, bw, vfo) = {
+                    let cfg = lock(&i.cfg);
+                    (cfg.rate, cfg.bw, cfg.vfo_hz)
+                };
+                let edge = (rate * 0.45 - bw / 2.0).max(rate * 0.05);
+                let v = vfo.clamp(c - edge, c + edge);
+                if v != vfo {
+                    lock(&i.cfg).vfo_hz = v;
+                    i.bump_params(|p| p.vfo_hz = v);
+                }
+                Ok(json!({ "center_hz": c, "vfo_hz": v }))
             }
             Cmd::Mode { mode, bw } => {
                 let m = Mode::parse(&mode).ok_or("unknown mode")?;
@@ -422,7 +436,8 @@ impl Engine {
             Cmd::Status => Ok(status(i)),
             Cmd::Messages => Ok(json!({ "messages": lock(&i.messages).iter().cloned().collect::<Vec<_>>() })),
             Cmd::Config => serde_json::to_value(lock(&i.cfg).clone()).map_err(|e| e.to_string()),
-            Cmd::UsbAttach { fd, vid, pid } => {
+            Cmd::UsbAttach { fd, vid, pid, product } => {
+                let blog_v4 = product.as_deref().map(|p| p.contains("Blog V4")).unwrap_or(false);
                 let kind = if (vid, pid) == sh_sources::usb::ESP32S3_JTAG {
                     "esp"
                 } else if sh_sources::usb::is_rtl(vid, pid) {
@@ -433,9 +448,9 @@ impl Engine {
                 {
                     let mut d = lock(&i.devices);
                     d.retain(|x| x.kind != kind);
-                    d.push(UsbDev { kind, vid, pid, fd });
+                    d.push(UsbDev { kind, vid, pid, fd, blog_v4 });
                 }
-                i.note(format!("USB: {kind} {vid:04x}:{pid:04x} plugged in"));
+                i.note(format!("USB: {kind} {vid:04x}:{pid:04x} {} plugged in", product.unwrap_or_default()));
                 if lock(&i.cfg).usb_autostart {
                     switch_source(i, kind)?;
                 }
@@ -485,10 +500,10 @@ impl Drop for Engine {
 fn usb_id(i: &Inner, kind: &str) -> sh_sources::usb::UsbId {
     let d = lock(&i.devices).iter().find(|d| d.kind == kind).copied();
     match (d, kind) {
-        (Some(d), _) => sh_sources::usb::UsbId { vid: d.vid, pid: d.pid, fd: d.fd },
+        (Some(d), _) => sh_sources::usb::UsbId { vid: d.vid, pid: d.pid, fd: d.fd, blog_v4: d.blog_v4 },
         // Desktop: found by vendor / product ID
-        (None, "esp") => sh_sources::usb::UsbId { vid: 0x303a, pid: 0x1001, fd: None },
-        (None, _) => sh_sources::usb::UsbId { vid: 0x0bda, pid: 0x2838, fd: None },
+        (None, "esp") => sh_sources::usb::UsbId { vid: 0x303a, pid: 0x1001, fd: None, blog_v4: false },
+        (None, _) => sh_sources::usb::UsbId { vid: 0x0bda, pid: 0x2838, fd: None, blog_v4: false },
     }
 }
 
