@@ -1,0 +1,17 @@
+[package]
+name = "sh-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+sh-dsp = { path = "../sh-dsp" }
+sh-sat = { path = "../sh-sat" }
+sh-sources = { path = "../sh-sources" }
+sh-plugin = { path = "../sh-plugin" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+log.workspace = true
+ureq = "3"

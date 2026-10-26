@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ESP32-S3 native USB (USB Serial/JTAG) -->
+    <usb-device vendor-id="12346" product-id="4097" />
+    <!-- RTL2832U dongles -->
+    <usb-device vendor-id="3034" product-id="10296" />
+    <usb-device vendor-id="3034" product-id="10290" />
+</resources>

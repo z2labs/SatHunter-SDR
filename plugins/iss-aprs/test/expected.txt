@@ -1,0 +1,2 @@
+text HA5ABC-7 > APRS: !4729.87N/01902.41E>Hello from Budapest
+map 47.497833 19.040167 HA5ABC-7
