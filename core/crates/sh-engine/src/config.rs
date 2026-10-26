@@ -32,6 +32,8 @@ pub struct Config {
     pub demo_when_no_device: bool,
     /// Switch to an SDR when one is plugged in
     pub usb_autostart: bool,
+    /// VFO stays in the middle of the span, tuning moves the hardware
+    pub center_tuning: bool,
     /// Last VFO frequency per source ("demo", "rtl", "esp")
     pub freqs: std::collections::BTreeMap<String, f64>,
 }
@@ -60,6 +62,7 @@ impl Default for Config {
             selected_tx: None,
             demo_when_no_device: true,
             usb_autostart: true,
+            center_tuning: false,
             freqs: Default::default(),
         }
     }

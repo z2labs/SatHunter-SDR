@@ -50,11 +50,78 @@ impl RtlSource {
     }
 }
 
-fn tuner_gain(g: Option<f32>) -> TunerGain {
-    match g {
-        None => TunerGain::Auto,
-        Some(db) => TunerGain::Manual((db * 10.0).round() as i32), // tenths of a dB
+fn manual(db: f32) -> TunerGain {
+    TunerGain::Manual((db * 10.0).round() as i32) // tenths of a dB
+}
+
+/// Automatic gain done here instead of in the tuner: the R820T/R828D's own AGC lets strong
+/// signals (FM broadcast) overload the 8-bit ADC. This one watches the samples and steps the
+/// manual gain so the level stays well inside the ADC range: down fast on clipping, up slowly.
+struct Agc {
+    idx: usize,
+    n: usize,
+    sum: f64,
+    clips: usize,
+    settle: usize,
+}
+
+impl Agc {
+    const START: usize = 14; // 25.4 dB
+
+    fn new() -> Agc {
+        Agc { idx: Self::START, n: 0, sum: 0.0, clips: 0, settle: 0 }
     }
+
+    fn db(&self) -> f32 {
+        GAINS[self.idx]
+    }
+
+    /// Feed raw 8-bit I/Q; returns a new gain when it should change. `window`: samples per decision.
+    fn feed(&mut self, raw: &[u8], window: usize) -> Option<f32> {
+        for p in raw.chunks_exact(2) {
+            let (i, q) = (p[0] as f32 - 127.4, p[1] as f32 - 127.4);
+            self.sum += (i * i + q * q) as f64;
+            if p[0] <= 1 || p[0] >= 254 || p[1] <= 1 || p[1] >= 254 {
+                self.clips += 1;
+            }
+        }
+        self.n += raw.len() / 2;
+        if self.n < window {
+            return None;
+        }
+        let rms = (self.sum / self.n as f64).sqrt() / 128.0;
+        let clip = self.clips as f64 / self.n as f64;
+        self.n = 0;
+        self.sum = 0.0;
+        self.clips = 0;
+        if self.settle > 0 {
+            self.settle -= 1; // the last change has not reached these samples yet
+            return None;
+        }
+        let old = self.idx;
+        if clip > 2e-3 {
+            self.idx = self.idx.saturating_sub(3);
+        } else if clip > 2e-4 || rms > 0.40 {
+            self.idx = self.idx.saturating_sub(1);
+        } else if rms < 0.12 && clip == 0.0 && self.idx + 1 < GAINS.len() {
+            self.idx += 1;
+        }
+        if self.idx != old {
+            self.settle = 1;
+            Some(self.db())
+        } else {
+            None
+        }
+    }
+}
+
+fn status_line(tuner: &str, v4: bool, rate: f64, gain: Option<f32>, agc: &Agc) -> String {
+    let v4 = if v4 { " (RTL-SDR Blog V4)" } else { "" };
+    let g = match gain {
+        Some(g) => format!("{g:.1} dB"),
+        None => format!("auto {:.1} dB", agc.db()),
+    };
+    format!("tuner {tuner}{v4}, {:.3} MS/s, gain {g}", rate / 1e6)
 }
 
 fn set_status(sh: &Shared, s: String) {
@@ -83,7 +150,7 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     let setup = (|| -> Result<(), String> {
         sdr.set_sample_rate(rate as u32).map_err(|e| format!("sample rate: {e:?}"))?;
         sdr.set_center_freq(center as u32).map_err(|e| format!("frequency: {e:?}"))?;
-        sdr.set_tuner_gain(tuner_gain(gain)).map_err(|e| format!("gain: {e:?}"))?;
+        sdr.set_tuner_gain(manual(gain.unwrap_or(GAINS[Agc::START]))).map_err(|e| format!("gain: {e:?}"))?;
         sdr.reset_buffer().map_err(|e| format!("reset: {e:?}"))?;
         Ok(())
     })();
@@ -91,8 +158,11 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
         return fail(e);
     }
     let tuner = sdr.get_tuner_id().map(|s| s.to_string()).unwrap_or_else(|_| "?".into());
-    let v4 = if sdr.is_blog_v4() { " (RTL-SDR Blog V4)" } else { "" };
-    set_status(&sh, format!("tuner {tuner}{v4}, {:.3} MS/s, gain {}", rate / 1e6, gain.map(|g| format!("{g:.1} dB")).unwrap_or("auto".into())));
+    let v4 = sdr.is_blog_v4();
+    let mut gain = gain;
+    let mut agc = Agc::new();
+    let window = (rate * 0.1) as usize; // one decision per 100 ms
+    set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
     sh.pending_freq.store(false, Ordering::SeqCst);
     sh.pending_gain.store(false, Ordering::SeqCst);
     // 32 kB transfers: ~7 ms at 2.4 MS/s, low latency for the waterfall
@@ -110,8 +180,10 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
             }
         }
         if sh.pending_gain.swap(false, Ordering::SeqCst) {
-            let g = *sh.gain.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = ctl.set_tuner_gain(tuner_gain(g));
+            gain = *sh.gain.lock().unwrap_or_else(|e| e.into_inner());
+            agc = Agc::new();
+            let _ = ctl.set_tuner_gain(manual(gain.unwrap_or(agc.db())));
+            set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
         }
         match reader.try_recv() {
             None => std::thread::sleep(Duration::from_millis(2)),
@@ -121,6 +193,12 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
             }
             Some(Ok(AsyncReadEvent::Reconfigured { change: AsyncReadConfigChange::CenterFrequency(f), .. })) => center = f as f64,
             Some(Ok(AsyncReadEvent::Samples { data, .. })) => {
+                if gain.is_none() {
+                    if let Some(db) = agc.feed(&data, window) {
+                        let _ = ctl.set_tuner_gain(manual(db));
+                        set_status(&sh, status_line(&tuner, v4, rate, gain, &agc));
+                    }
+                }
                 out.clear();
                 out.extend(data.chunks_exact(2).map(|p| Complex32::new((p[0] as f32 - 127.4) / 128.0, (p[1] as f32 - 127.4) / 128.0)));
                 if !sink.push(Block { center_hz: center, rate, samples: std::mem::take(&mut out) }) {
@@ -198,5 +276,43 @@ impl Source for RtlSource {
 impl Drop for RtlSource {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tone(amp: f32, n: usize) -> Vec<u8> {
+        (0..n).flat_map(|k| {
+            let ph = k as f32 * 0.1;
+            [(127.4 + amp * ph.cos()).round().clamp(0.0, 255.0) as u8, (127.4 + amp * ph.sin()).round().clamp(0.0, 255.0) as u8]
+        }).collect()
+    }
+
+    #[test]
+    fn agc_backs_off_on_clipping_and_climbs_on_weak_signals() {
+        let mut a = Agc::new();
+        let start = a.db();
+        // Overload: clipped samples -> gain goes down quickly
+        let hot = tone(200.0, 1000);
+        let mut changed = None;
+        for _ in 0..4 {
+            changed = changed.or(a.feed(&hot, 1000));
+        }
+        assert!(changed.is_some() && a.db() < start);
+        // Weak: gain climbs back up
+        let mut b = Agc::new();
+        let weak = tone(5.0, 1000);
+        for _ in 0..20 {
+            b.feed(&weak, 1000);
+        }
+        assert!(b.db() > start);
+        // Comfortable level: no change
+        let mut c = Agc::new();
+        let ok = tone(30.0, 1000);
+        for _ in 0..10 {
+            assert_eq!(c.feed(&ok, 1000), None);
+        }
     }
 }
