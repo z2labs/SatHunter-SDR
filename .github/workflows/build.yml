@@ -5,6 +5,8 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -67,10 +69,11 @@ jobs:
         with:
           name: SatHunterSDR-apk
           path: SatHunterSDR.apk
-      - name: Release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Release (tags v*, or a release published on GitHub)
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
           files: SatHunterSDR.apk
           # v0.2.0-beta1 and the like are pre-releases
           prerelease: ${{ contains(github.ref_name, '-') }}
