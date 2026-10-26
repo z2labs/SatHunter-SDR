@@ -58,6 +58,9 @@ data class SatRow(
     val freq: Double,
     val modes: String,
     val bands: String,
+    /** SatNOGS: share of good observations of its best transmitter (%), and how many */
+    val success: Double = 0.0,
+    val good: Int = 0,
 )
 
 data class FilterState(
@@ -67,6 +70,8 @@ data class FilterState(
     val favouritesOnly: Boolean = false,
     val minEl: Double = 5.0,
     val search: String = "",
+    /** "pass" = next pass first, "health" = best heard on SatNOGS first */
+    val sort: String = "pass",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("bands", JSONArray(bands.toList()))
@@ -75,6 +80,7 @@ data class FilterState(
         .put("favourites_only", favouritesOnly)
         .put("min_el", minEl)
         .put("search", search)
+        .put("sort", sort)
 }
 
 data class BandInfo(val id: String, val name: String)
@@ -316,6 +322,8 @@ class Engine(dataDir: String) {
                     freq = r.optDouble("freq"),
                     modes = r.optString("modes"),
                     bands = r.optString("bands"),
+                    success = r.optDouble("success", 0.0),
+                    good = r.optInt("good", 0),
                 )
             )
         }
@@ -328,6 +336,7 @@ class Engine(dataDir: String) {
             favouritesOnly = f?.optBoolean("favourites_only", false) ?: false,
             minEl = f?.optDouble("min_el", 5.0) ?: 5.0,
             search = f?.optString("search", "") ?: "",
+            sort = f?.optString("sort", "pass") ?: "pass",
         )
         val bi = j.optJSONArray("bands") ?: JSONArray()
         val stats = j.optJSONObject("stats")

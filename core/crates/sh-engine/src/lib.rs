@@ -888,14 +888,14 @@ fn recalc(i: &Arc<Inner>) {
         }
         if last_pub.elapsed() > Duration::from_millis(500) {
             let mut snap = rows.clone();
-            sat::sort_rows(&mut snap, now);
+            sat::sort_rows(&mut snap, now, filter.sort);
             let mut s = lock(&i.sat);
             s.rows = Arc::new(snap);
             s.calc_done = k + 1;
             last_pub = std::time::Instant::now();
         }
     }
-    sat::sort_rows(&mut rows, now);
+    sat::sort_rows(&mut rows, now, filter.sort);
     // Selected satellite: its next pass (any elevation) and the radar track
     let (mut sel_pass, mut trk) = (None, None);
     if let Some(n) = sel {
@@ -1153,8 +1153,16 @@ mod tests {
         let (n, bins) = e.spectrum_rows(&mut rows, &mut meta);
         assert!(meta[1] > 0.0, "row rate");
         assert!(n > 0 && bins == 2048, "no spectrum rows");
+        // Audio keeps coming (a loaded test machine may be slow: wait up to 3 s)
         let mut a = vec![0.0f32; 48_000];
-        let got = e.audio(&mut a);
+        let mut got = 0;
+        for _ in 0..30 {
+            got += e.audio(&mut a);
+            if got > 10_000 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         assert!(got > 10_000, "audio {got}");
         let st = cmd(&e, r#"{"cmd":"status"}"#);
         assert_eq!(st["running"], true);

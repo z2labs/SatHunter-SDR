@@ -84,6 +84,13 @@ fun SatScreen(list: SatList, detail: SatDetail?, engine: Engine, radarOn: Boolea
         }
         if (list.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
+        // Order: next pass, or the satellites the SatNOGS ground stations hear best
+        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Order", color = Dim, fontSize = 13.sp)
+            for ((id, name) in listOf("pass" to "Next pass", "health" to "Best heard")) {
+                FilterChip(selected = list.filter.sort == id, onClick = { engine.filter(list.filter.copy(sort = id)) }, label = { Text(name) })
+            }
+        }
         if (showFilter) FilterPanel(list, engine)
 
         detail?.let { SelectedCard(it, engine, radarOn, onRadar) }
@@ -126,7 +133,10 @@ private fun SatRowView(r: SatRow, now: Double, selected: Boolean, onStar: () -> 
                     Text("HU", fontSize = 10.sp, color = Color(0xFF0A0F16), modifier = Modifier.background(Color(0xFF5AE08C), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp))
                 }
             }
-            Text(r.modes, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HealthBadge(r)
+                Text(r.modes, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         Column(Modifier.width(78.dp)) {
             Text(
@@ -144,6 +154,25 @@ private fun SatRowView(r: SatRow, now: Double, selected: Boolean, onStar: () -> 
         if (!r.pass.always) Text("%.0f° → %.0f°".format(r.pass.aosAz, r.pass.losAz), color = Dim, fontSize = 12.sp, modifier = Modifier.width(90.dp))
         Text(r.bands, color = Dim, fontSize = 12.sp, maxLines = 1)
     }
+}
+
+/** SatNOGS reception: success rate coloured, number of good observations */
+@Composable
+private fun HealthBadge(r: SatRow) {
+    if (r.good <= 0) return
+    val c = when {
+        r.success >= 60 -> Color(0xFF5AE08C)
+        r.success >= 25 -> SatYellow
+        else -> Color(0xFFFF7A6B)
+    }
+    val n = when {
+        r.good >= 1_000_000 -> "%.1fM".format(r.good / 1e6)
+        r.good >= 10_000 -> "%.0fk".format(r.good / 1e3)
+        r.good >= 1_000 -> "%.1fk".format(r.good / 1e3)
+        else -> r.good.toString()
+    }
+    Text("♥ %.0f%% · %s".format(r.success, n), color = c, fontSize = 11.sp, maxLines = 1)
+    Spacer(Modifier.width(6.dp))
 }
 
 private object MaterialColors {

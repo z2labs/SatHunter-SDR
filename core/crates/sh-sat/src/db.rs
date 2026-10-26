@@ -6,12 +6,14 @@ use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 
 /// Where the data comes from: (cache file name, URL).
-pub fn sources() -> [(&'static str, &'static str); 4] {
+pub fn sources() -> [(&'static str, &'static str); 5] {
     [
         ("transmitters.json", "https://db.satnogs.org/api/transmitters/?format=json"),
         ("tle_satnogs.json", "https://db.satnogs.org/api/tle/?format=json"),
         ("tle_celestrak.txt", "https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=tle"),
         ("satellites.json", "https://db.satnogs.org/api/satellites/?format=json"),
+        // Observation statistics per transmitter (SatNOGS Network): how often it is received
+        ("network_stats.json", "https://network.satnogs.org/api/transmitters/?format=json"),
     ]
 }
 
@@ -78,6 +80,11 @@ pub struct Transmitter {
     pub alive: bool,
     pub invert: bool,
     pub norad: u64,
+    /// SatNOGS Network observations of this transmitter: good ones and all vetted ones
+    #[serde(default)]
+    pub good: u32,
+    #[serde(default)]
+    pub total: u32,
 }
 
 impl Transmitter {
@@ -101,6 +108,15 @@ impl Transmitter {
     pub fn active(&self) -> bool {
         self.alive && self.status == "active"
     }
+    /// Share of good observations, 0..1 (0 when never observed)
+    pub fn success(&self) -> f64 {
+        if self.total == 0 { 0.0 } else { self.good as f64 / self.total as f64 }
+    }
+    /// How reliably the ground stations hear it: success rate weighted by the number of good
+    /// observations (a few lucky passes do not beat thousands of good ones)
+    pub fn health(&self) -> f64 {
+        self.success() * (1.0 + self.good as f64).ln()
+    }
 }
 
 #[derive(Debug)]
@@ -117,7 +133,19 @@ pub struct Satellite {
     pub alive: bool,
 }
 
+/// Order of the satellite list
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortBy {
+    /// Next pass first
+    #[default]
+    Pass,
+    /// Best received on SatNOGS first
+    Health,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Filter {
     pub bands: BTreeSet<Band>,
     pub amateur_only: bool,
@@ -125,6 +153,7 @@ pub struct Filter {
     pub favourites_only: bool,
     pub min_el: f64,
     pub search: String,
+    pub sort: SortBy,
 }
 
 impl Default for Filter {
@@ -136,6 +165,7 @@ impl Default for Filter {
             favourites_only: false,
             min_el: 5.0,
             search: String::new(),
+            sort: SortBy::Pass,
         }
     }
 }
@@ -168,6 +198,7 @@ pub struct RawData {
     pub tle_satnogs_json: Option<String>,
     pub tle_celestrak_txt: Option<String>,
     pub satellites_json: Option<String>,
+    pub network_stats_json: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -276,6 +307,20 @@ pub fn load(raw: &RawData) -> Result<(Vec<Satellite>, LoadStats), LoadError> {
         }
     }
 
+    // SatNOGS Network: [{"uuid": "...", "stats": {"good_count": n, "bad_count": n, "unknown_count": n, ...}}]
+    let mut obs: HashMap<String, (u32, u32)> = HashMap::new();
+    if let Some(txt) = &raw.network_stats_json {
+        if let Ok(v) = serde_json::from_str::<Value>(txt) {
+            for o in list(&v) {
+                let Some(st) = o.get("stats") else { continue };
+                let good = f(st, "good_count") as u32;
+                // vetted = good + bad (unknown and future ones say nothing yet)
+                let vetted = good + f(st, "bad_count") as u32;
+                obs.insert(s(o, "uuid"), (good, vetted));
+            }
+        }
+    }
+
     let txt = raw.transmitters_json.as_ref().ok_or(LoadError::NoTransmitters)?;
     let v: Value = serde_json::from_str(txt).map_err(|e| LoadError::Json(e.to_string()))?;
     let mut txs: HashMap<u64, Vec<Transmitter>> = HashMap::new();
@@ -295,8 +340,12 @@ pub fn load(raw: &RawData) -> Result<(Vec<Satellite>, LoadStats), LoadError> {
             std::mem::swap(&mut high, &mut low);
         }
         let sat_alive = status.get(&norad).map(|s| status_alive(s)).unwrap_or(true);
+        let uuid = s(o, "uuid");
+        let (good, total) = obs.get(&uuid).copied().unwrap_or((0, 0));
         txs.entry(norad).or_default().push(Transmitter {
-            uuid: s(o, "uuid"),
+            good,
+            total,
+            uuid,
             description: s(o, "description"),
             kind: s(o, "type"),
             mode: s(o, "mode"),
@@ -351,6 +400,7 @@ mod tests {
             tle_satnogs_json: Some(r#"[{"tle0":"0 ISS (ZARYA)","tle1":"1 25544U 98067A   26282.95044904  .00006711  00000-0  13074-3 0  9998","tle2":"2 25544  51.6315  92.1575 0006672 244.0714 115.9587 15.48795780589546","norad_cat_id":25544}]"#.into()),
             tle_celestrak_txt: None,
             satellites_json: Some(r#"[{"name":"ISS","norad_cat_id":25544,"status":"in orbit","countries":"RU,US"}]"#.into()),
+            network_stats_json: Some(r#"[{"uuid":"a","stats":{"total_count":100,"unknown_count":10,"future_count":0,"good_count":80,"bad_count":10,"success_rate":80}}]"#.into()),
         }
     }
 
@@ -368,6 +418,12 @@ mod tests {
         assert_eq!(iss.tx[1].down_low, 435_760_000.0);
         let f = Filter::default();
         assert!(f.tx_matches(&iss.tx[0]));
+        let a = iss.tx.iter().find(|t| t.uuid == "a").unwrap();
+        assert_eq!((a.good, a.total), (80, 90));
+        assert!(a.health() > iss.tx.iter().find(|t| t.uuid == "b").unwrap().health());
+        // Old settings without "sort" still load
+        let old: Filter = serde_json::from_str(r#"{"amateur_only":false}"#).unwrap();
+        assert_eq!(old.sort, SortBy::Pass);
     }
 
     #[test]
