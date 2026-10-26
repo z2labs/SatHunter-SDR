@@ -8,6 +8,8 @@ import kotlin.concurrent.thread
 /** Plays the engine's 48 kHz audio while the receiver runs. */
 class AudioOut {
     @Volatile var muted = false
+    /** Software gain, 0..2 (1 = as demodulated); the phone's volume keys work on top */
+    @Volatile var volume = 1f
     @Volatile private var run = false
     private var worker: Thread? = null
 
@@ -42,7 +44,8 @@ class AudioOut {
                         Thread.sleep(5)
                         continue
                     }
-                    if (muted) buf.fill(0f, 0, n)
+                    val g = if (muted) 0f else volume
+                    if (g != 1f) for (i in 0 until n) buf[i] = (buf[i] * g).coerceIn(-1f, 1f)
                     track.write(buf, 0, n, AudioTrack.WRITE_BLOCKING)
                 }
             } catch (_: Exception) {

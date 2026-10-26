@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,6 +115,7 @@ class MainActivity : ComponentActivity() {
         val gpsInfo by gps.info.collectAsState()
         var tab by remember { mutableIntStateOf(0) }
         var muted by remember { mutableStateOf(false) }
+        var volume by remember { mutableFloatStateOf(prefs.getFloat("volume", 1f)) }
         var compassOn by remember { mutableStateOf(prefs.getBoolean("compass", true)) }
         var radarOn by remember { mutableStateOf(prefs.getBoolean("radar", true)) }
         var fullscreen by remember { mutableStateOf(prefs.getBoolean("fullscreen", false)) }
@@ -133,6 +135,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(st.running) { if (st.running) audio.start() else audio.stop() }
         LaunchedEffect(tab) { engine.wantList = tab == 1; if (tab == 1) engine.refreshList() }
         LaunchedEffect(muted) { audio.muted = muted }
+        LaunchedEffect(volume) { audio.volume = volume }
         val full = fullscreen && tab == 0
         LaunchedEffect(full) { immersive(full) }
 
@@ -156,6 +159,8 @@ class MainActivity : ComponentActivity() {
                 when (tab) {
                     0 -> ReceiverScreen(
                         st = st, detail = detail, pose = pose, compassOn = compassOn, radarOn = radarOn, muted = muted,
+                        volume = volume,
+                        onVolume = { volume = it; muted = false; prefs.edit().putFloat("volume", it).apply() },
                         fullscreen = full,
                         onFullscreen = { fullscreen = it; prefs.edit().putBoolean("fullscreen", it).apply() },
                         onPlay = { if (st.running) engine.stop() else engine.start() },
