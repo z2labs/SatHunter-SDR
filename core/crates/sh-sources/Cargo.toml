@@ -1,0 +1,12 @@
+[package]
+name = "sh-sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+sh-dsp = { path = "../sh-dsp" }
+thiserror.workspace = true
+log.workspace = true

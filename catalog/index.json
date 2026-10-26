@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "iss",
+      "name": "ISS (ZARYA)",
+      "norad": 25544,
+      "description": "International Space Station: APRS digipeater, crew FM voice (ARISS school contacts) and SSTV events on 145.800 MHz.",
+      "tags": ["iss", "aprs", "sstv", "voice", "beginner"],
+      "downlinks": [
+        { "label": "APRS digipeater", "freq_hz": 145825000, "mode": "AFSK", "baud": 1200, "plugin": "iss-aprs" },
+        { "label": "Voice / SSTV events", "freq_hz": 145800000, "mode": "FM" }
+      ]
+    },
+    {
+      "id": "mauve",
+      "name": "Mauve",
+      "norad": 66756,
+      "description": "Hungarian satellite (SatNOGS: countries HU).",
+      "tags": ["hu"],
+      "downlinks": [
+        { "label": "Telemetry", "freq_hz": 401750000, "mode": "FM" },
+        { "label": "S-band telemetry", "freq_hz": 2250000000, "mode": "FM" },
+        { "label": "LoRa beacon", "freq_hz": 137925000, "mode": "LoRa" }
+      ]
+    }
+  ],
+  "plugins": [
+    { "id": "iss-aprs", "path": "plugins/iss-aprs" }
+  ]
+}

@@ -1,0 +1,9 @@
+id = "iss-aprs"
+name = "ISS APRS"
+version = "0.1"
+author = "SatHunterSDR"
+description = "Shows the APRS packets the ISS digipeater repeats: who sent it, the message and the position on the map."
+level = "easy"
+chain = "afsk1200"
+norad = [25544]
+modes = ["AFSK", "APRS"]
