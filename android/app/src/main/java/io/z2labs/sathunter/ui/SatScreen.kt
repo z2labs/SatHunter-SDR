@@ -125,21 +125,21 @@ fun SatScreen(list: SatList, detail: SatDetail?, engine: Engine, radarOn: Boolea
 
 /**
  * The list in labelled groups, so it is clear why a satellite is where it is:
- * your favourites and the Hungarian satellites on top, then (next-pass order) the ones overhead
+ * your favourites on top, then (next-pass order) the ones overhead
  * now, the next two hours and later; or (best-heard order) the rest by SatNOGS reception.
  */
 private fun sections(list: SatList): List<Pair<String, List<SatRow>>> {
     val now = list.now
     fun up(r: SatRow) = r.pass.always || r.pass.aos <= now
     val byTime = compareBy<SatRow>({ !up(it) }, { it.pass.aos })
-    val pinned = list.rows.filter { it.fav || it.hu }.sortedWith(byTime)
-    val rest = list.rows.filter { !it.fav && !it.hu }
+    val pinned = list.rows.filter { it.fav }.sortedWith(byTime)
+    val rest = list.rows.filter { !it.fav }
     if (list.filter.sort == "health") {
-        return listOf("Favourites and Hungarian" to pinned, "Best heard on SatNOGS" to rest)
+        return listOf("Favourites" to pinned, "Best heard on SatNOGS" to rest)
     }
     val sorted = rest.sortedWith(byTime)
     return listOf(
-        "Favourites and Hungarian" to pinned,
+        "Favourites" to pinned,
         "Overhead now" to sorted.filter { up(it) },
         "Next 2 hours" to sorted.filter { !up(it) && it.pass.aos - now < 7200 },
         "Later today" to sorted.filter { !up(it) && it.pass.aos - now >= 7200 },

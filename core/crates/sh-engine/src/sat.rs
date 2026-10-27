@@ -148,15 +148,9 @@ pub fn download(root: &Path, mut progress: impl FnMut(&str)) -> String {
     if tle_ok > 0 { String::new() } else { first_err }
 }
 
-/// Group for sorting: favourites, then Hungarian satellites, then the rest.
+/// Group for sorting: favourites, then the rest.
 fn group(r: &Row) -> u8 {
-    if r.fav {
-        0
-    } else if r.hu {
-        1
-    } else {
-        2
-    }
+    if r.fav { 0 } else { 1 }
 }
 
 pub fn sort_rows(rows: &mut [Row], now: f64, by: db::SortBy) {
@@ -173,8 +167,7 @@ pub fn sort_rows(rows: &mut [Row], now: f64, by: db::SortBy) {
     });
 }
 
-/// Candidate rows for the filter: a matching downlink, or a favourite, or a Hungarian satellite
-/// (alive only when "active only" is set). Passes are not computed yet.
+/// Candidate rows for the filter: a matching downlink, or a favourite. Passes are not computed yet.
 pub fn candidates(sats: &[Satellite], f: &Filter, favs: &BTreeSet<u64>) -> Vec<(usize, Row)> {
     let mut out = Vec::new();
     for (i, s) in sats.iter().enumerate() {
@@ -186,8 +179,7 @@ pub fn candidates(sats: &[Satellite], f: &Filter, favs: &BTreeSet<u64>) -> Vec<(
         let mut any = false;
         let mut bands: Vec<&str> = Vec::new();
         for t in &s.tx {
-            let special = fav || (s.hungarian && (!f.active_only || (s.alive && t.active())));
-            if !f.tx_matches(t) && !special {
+            if !f.tx_matches(t) && !fav {
                 continue;
             }
             any = true;
@@ -236,7 +228,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn favourites_then_hungarian_then_visible_first() {
+    fn favourites_then_visible_then_soonest() {
         let mk = |n: u64, fav: bool, hu: bool, aos: f64| Row {
             norad: n, name: n.to_string(), hu, fav, pass: Pass { aos, ..Default::default() }, freq: 0.0, modes: String::new(), bands: String::new(),
             health: n as f64, success: 0.0, good: 0,
@@ -244,7 +236,7 @@ mod tests {
         let mut rows = vec![mk(1, false, false, 50.0), mk(2, false, false, 5.0), mk(3, false, true, 90.0), mk(4, true, false, 80.0), mk(5, false, false, 30.0)];
         sort_rows(&mut rows, 10.0, db::SortBy::Pass);
         let order: Vec<u64> = rows.iter().map(|r| r.norad).collect();
-        assert_eq!(order, vec![4, 3, 2, 5, 1]);
+        assert_eq!(order, vec![4, 2, 5, 1, 3]);
         // Health: favourite first, then the healthiest
         sort_rows(&mut rows, 10.0, db::SortBy::Health);
         let order: Vec<u64> = rows.iter().map(|r| r.norad).collect();
