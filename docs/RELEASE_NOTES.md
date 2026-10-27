@@ -1,4 +1,4 @@
-# SatHunterSDR 0.2.0 beta 7
+# SatHunterSDR 0.2.0 beta 8
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
@@ -7,12 +7,17 @@ file manager when asked).
 existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
 with the same Z2Labs key and installs over the previous one.
 
+## New in beta 8
+
+- Hungarian satellites are no longer pinned to the top of the list (search for one and star it
+  if you want it there); only favourites are.
+
 ## New in beta 7
 
 - **Nixie-tube frequency display**, full width: tap the upper half of a tube to go up, the lower
   half to go down, drag it to spin, long-press to type a frequency.
 - **Volume slider** next to the speaker button (0–200 %; the speaker button mutes).
-- **Clearer satellite list**: labelled groups (Favourites and Hungarian · Overhead now · Next 2
+- **Clearer satellite list**: labelled groups (Favourites · Overhead now · Next 2
   hours · Later today), the pass in plain words ("In 12 min · 18:42–18:53", "Overhead now · 5 min
   left" with a progress bar), maximum elevation coloured by how good the pass is.
 
