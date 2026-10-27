@@ -42,9 +42,9 @@ handle=ln(P(-45),P(55),stroke="#22303e",stroke_width=15,stroke_linecap="round")
 c0=P(150); c1=P(128,16); c2=P(112,8)
 coax=f'<path d="M{c0[0]:.1f},{c0[1]:.1f} Q{c1[0]:.1f},{c1[1]:.1f} {c2[0]:.1f},{c2[1]:.1f}" stroke="#111" stroke-width="4" fill="none"/>'
 # phone across the boom, its back towards us (camera bump), clamped on
-pc=P(122)
+pc=P(105)
 phone=f"""
-<g transform="translate({pc[0]:.1f},{pc[1]:.1f}) rotate(-45) scale(1.3)">
+<g transform="translate({pc[0]:.1f},{pc[1]:.1f}) rotate(45) scale(1.3)">
   <rect x="-47" y="-25" width="94" height="50" rx="8" fill="#0c1117" stroke="#4a5a6c" stroke-width="2"/>
   <rect x="-42" y="-21" width="84" height="42" rx="4" fill="#05080c"/>
   <!-- SatHunterSDR in landscape: nixie frequency, radar, waterfall -->
