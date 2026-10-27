@@ -42,27 +42,27 @@ handle=ln(P(-45),P(55),stroke="#22303e",stroke_width=15,stroke_linecap="round")
 c0=P(150); c1=P(128,16); c2=P(112,8)
 coax=f'<path d="M{c0[0]:.1f},{c0[1]:.1f} Q{c1[0]:.1f},{c1[1]:.1f} {c2[0]:.1f},{c2[1]:.1f}" stroke="#111" stroke-width="4" fill="none"/>'
 # phone across the boom, its back towards us (camera bump), clamped on
-pc=P(105)
+pc=P(122)
 phone=f"""
 <g transform="translate({pc[0]:.1f},{pc[1]:.1f}) rotate(-45) scale(1.3)">
-  <rect x="-25" y="-47" width="50" height="94" rx="8" fill="#0c1117" stroke="#4a5a6c" stroke-width="2"/>
-  <rect x="-21" y="-42" width="42" height="84" rx="4" fill="#05080c"/>
-  <!-- SatHunterSDR on the screen: nixie frequency, radar, waterfall -->
-  <rect x="-19" y="-39" width="38" height="9" rx="1.5" fill="#1a0f08"/>
-  <text x="0" y="-32.2" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="7.2" fill="#ff9a3c" style="filter:drop-shadow(0 0 1.5px #ff5a00)">435.800</text>
-  <g transform="translate(0,-12)">
-    <circle r="13" fill="#06140d" stroke="#2fd47a" stroke-width="1.2"/>
-    <circle r="7" fill="none" stroke="#2fd47a" stroke-width=".8" opacity=".7"/>
-    <line x1="-13" y1="0" x2="13" y2="0" stroke="#2fd47a" stroke-width=".6" opacity=".6"/>
-    <line x1="0" y1="-13" x2="0" y2="13" stroke="#2fd47a" stroke-width=".6" opacity=".6"/>
-    <path d="M-9,8 Q-1,-12 10,-3" stroke="#ffc83c" stroke-width="1.3" fill="none"/>
-    <circle cx="5" cy="-6" r="2.4" fill="#ffc83c"/>
+  <rect x="-47" y="-25" width="94" height="50" rx="8" fill="#0c1117" stroke="#4a5a6c" stroke-width="2"/>
+  <rect x="-42" y="-21" width="84" height="42" rx="4" fill="#05080c"/>
+  <!-- SatHunterSDR in landscape: nixie frequency, radar, waterfall -->
+  <rect x="-40" y="-19" width="38" height="9" rx="1.5" fill="#1a0f08"/>
+  <text x="-21" y="-12.2" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="7.2" fill="#ff9a3c" style="filter:drop-shadow(0 0 1.5px #ff5a00)">435.800</text>
+  <g transform="translate(-21,6)">
+    <circle r="12" fill="#06140d" stroke="#2fd47a" stroke-width="1.2"/>
+    <circle r="6.5" fill="none" stroke="#2fd47a" stroke-width=".8" opacity=".7"/>
+    <line x1="-12" y1="0" x2="12" y2="0" stroke="#2fd47a" stroke-width=".6" opacity=".6"/>
+    <line x1="0" y1="-12" x2="0" y2="12" stroke="#2fd47a" stroke-width=".6" opacity=".6"/>
+    <path d="M-8,7 Q-1,-11 9,-3" stroke="#ffc83c" stroke-width="1.3" fill="none"/>
+    <circle cx="4.5" cy="-5.5" r="2.3" fill="#ffc83c"/>
   </g>
   <defs><linearGradient id="pwf" x1="0" y1="0" x2="1" y2="0">
     <stop offset="0" stop-color="#0d2a7a"/><stop offset=".45" stop-color="#1550c0"/><stop offset=".55" stop-color="#ffe14a"/><stop offset=".62" stop-color="#1550c0"/><stop offset="1" stop-color="#0d2a7a"/></linearGradient></defs>
-  <rect x="-19" y="5" width="38" height="34" rx="1.5" fill="url(#pwf)" opacity=".95"/>
-  <path d="M2,6 C2,18 -4,26 -6,38" stroke="#ffd25a" stroke-width="2" fill="none" opacity=".9"/>
-  <rect x="-29" y="-5" width="6" height="10" rx="1.5" fill="#2a3644"/><rect x="23" y="-5" width="6" height="10" rx="1.5" fill="#2a3644"/>
+  <rect x="1" y="-19" width="39" height="38" rx="1.5" fill="url(#pwf)" opacity=".95"/>
+  <path d="M24,-18 C24,-4 16,6 12,18" stroke="#ffd25a" stroke-width="2" fill="none" opacity=".9"/>
+  <rect x="-5" y="-29" width="10" height="6" rx="1.5" fill="#2a3644"/><rect x="-5" y="23" width="10" height="6" rx="1.5" fill="#2a3644"/>
 </g>"""
 dg=P(120,48)
 dongle=f"""<path d="M{P(108,30)[0]:.1f},{P(108,30)[1]:.1f} C{P(112,42)[0]:.1f},{P(112,42)[1]:.1f} {P(118,40)[0]:.1f},{P(118,40)[1]:.1f} {dg[0]:.1f},{dg[1]:.1f}" stroke="#111" stroke-width="3" fill="none"/>
