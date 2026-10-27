@@ -110,7 +110,7 @@ The logic is in the shared core ✅ (`sh-sat`, `sh-engine`):
   - Below the horizon it waits on the AOS frequency.
   - A manual retune is kept as an offset in the satellite's frame, so a linear transponder can be tuned across.
   - A big band jump re-centres the hardware 0.2·fs below the signal (away from the DC spike).
-- Radar, Look4Sat style:
+- Sky radar:
   - The whole pass, with the part already flown dimmed and a tick every minute.
   - AOS/LOS clock times at the ends and the max elevation at the top.
   - The satellite as a dot, plus up to 12 other satellites overhead.

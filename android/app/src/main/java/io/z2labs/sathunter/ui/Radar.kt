@@ -44,7 +44,7 @@ private fun wrap180(a: Double): Double {
 }
 
 /**
- * Look4Sat style radar: the selected satellite's pass, the satellite, other satellites overhead.
+ * Sky radar: the selected satellite's pass, the satellite, other satellites overhead.
  * With the compass on it turns with the phone (flat) or guides the aim (raised).
  * Drag to move, tap to switch size, tap the compass icon to switch the compass.
  */

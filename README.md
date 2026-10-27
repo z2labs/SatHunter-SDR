@@ -3,7 +3,7 @@
 ![SatHunterSDR: hunt satellites with your phone](docs/img/banner.png)
 
 A satellite-hunting SDR receiver for Android: pick a satellite, the app tunes to it and follows
-its Doppler shift, and a Look4Sat-style radar turns with your phone so you can point the antenna.
+its Doppler shift, and a sky radar turns with your phone so you can point the antenna.
 Made for classrooms first: it runs without hardware (a simulated RTL-SDR with a simulated pass),
 and decoders are small plugins that students can write.
 

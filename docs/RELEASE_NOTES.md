@@ -78,7 +78,7 @@ with the same Z2Labs key and installs over the previous one.
 ## Since 0.1
 
 - Satellites from SatNOGS DB and CelesTrak, pass list with favourites and Hungarian satellites
-  first, Doppler tracking, Look4Sat-style radar with compass and aim mode, simulated passes.
+  first, Doppler tracking, sky radar with compass and aim mode, simulated passes.
 - Demo source: works without hardware.
 
 ## Known limits
