@@ -3,6 +3,7 @@
 
 use crate::usb::UsbId;
 use crate::{Block, Complex32, Sink, Source, SourceError, SourceInfo};
+use sh_dsp::filter::Decimator;
 use rtl_sdr_rs::{AsyncReadConfigChange, AsyncReadEvent, DeviceId, RtlSdr, TunerGain};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,8 @@ struct Shared {
     /// Crystal error in ppm (f64 bits): the hardware is tuned to f / (1 + ppm), the blocks
     /// carry the true frequency
     ppm: AtomicU64,
+    /// 1, 2, 4, 8: the blocks come at rate / decimation (read when the stream starts)
+    decimation: AtomicU64,
     run: AtomicBool,
     status: Mutex<String>,
 }
@@ -50,6 +53,7 @@ impl RtlSource {
                 bias: AtomicBool::new(false),
                 pending_bias: AtomicBool::new(false),
                 ppm: AtomicU64::new(0f64.to_bits()),
+                decimation: AtomicU64::new(1),
                 run: AtomicBool::new(false),
                 status: Mutex::new(String::new()),
             }),
@@ -67,6 +71,11 @@ fn true_freq(hw: f64, ppm: f64) -> f64 {
     hw * (1.0 + ppm * 1e-6)
 }
 
+/// Raw RTL2832U bytes (I, Q interleaved, offset binary around 127.4) to complex samples.
+pub fn convert(raw: &[u8], out: &mut Vec<Complex32>) {
+    out.extend(raw.chunks_exact(2).map(|p| Complex32::new((p[0] as f32 - 127.4) / 128.0, (p[1] as f32 - 127.4) / 128.0)));
+}
+
 fn manual(db: f32) -> TunerGain {
     TunerGain::Manual((db * 10.0).round() as i32) // tenths of a dB
 }
@@ -74,7 +83,7 @@ fn manual(db: f32) -> TunerGain {
 /// Automatic gain done here instead of in the tuner: the R820T/R828D's own AGC lets strong
 /// signals (FM broadcast) overload the 8-bit ADC. This one watches the samples and steps the
 /// manual gain so the level stays well inside the ADC range: down fast on clipping, up slowly.
-struct Agc {
+pub(crate) struct Agc {
     idx: usize,
     n: usize,
     sum: f64,
@@ -88,16 +97,16 @@ impl Agc {
     /// the intermodulation (a weak beacon is not helped by filling the ADC with noise)
     const MAX: usize = 22;
 
-    fn new() -> Agc {
+    pub(crate) fn new() -> Agc {
         Agc { idx: Self::START, n: 0, sum: 0.0, clips: 0, settle: 0 }
     }
 
-    fn db(&self) -> f32 {
+    pub(crate) fn db(&self) -> f32 {
         GAINS[self.idx]
     }
 
     /// Feed raw 8-bit I/Q; returns a new gain when it should change. `window`: samples per decision.
-    fn feed(&mut self, raw: &[u8], window: usize) -> Option<f32> {
+    pub(crate) fn feed(&mut self, raw: &[u8], window: usize) -> Option<f32> {
         for p in raw.chunks_exact(2) {
             let (i, q) = (p[0] as f32 - 127.4, p[1] as f32 - 127.4);
             self.sum += (i * i + q * q) as f64;
@@ -195,6 +204,9 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     };
     let ctl = reader.control_handle();
     let mut out: Vec<Complex32> = Vec::with_capacity(16 * 1024);
+    let mut raw_iq: Vec<Complex32> = Vec::with_capacity(16 * 1024);
+    let mut dec = Decimator::new(sh.decimation.load(Ordering::SeqCst) as usize, rate);
+    let out_rate = rate / dec.factor() as f64;
     while sh.run.load(Ordering::SeqCst) {
         if sh.pending_freq.swap(false, Ordering::SeqCst) {
             let f = f64::from_bits(sh.freq.load(Ordering::SeqCst));
@@ -231,8 +243,14 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
                     }
                 }
                 out.clear();
-                out.extend(data.chunks_exact(2).map(|p| Complex32::new((p[0] as f32 - 127.4) / 128.0, (p[1] as f32 - 127.4) / 128.0)));
-                if !sink.push(Block { center_hz: center, rate, samples: std::mem::take(&mut out) }) {
+                if dec.factor() == 1 {
+                    convert(&data, &mut out);
+                } else {
+                    raw_iq.clear();
+                    convert(&data, &mut raw_iq);
+                    dec.process(&raw_iq, &mut out);
+                }
+                if !sink.push(Block { center_hz: center, rate: out_rate, samples: std::mem::take(&mut out) }) {
                     break;
                 }
             }
@@ -291,6 +309,12 @@ impl Source for RtlSource {
 
     fn sample_rate(&self) -> f64 {
         f64::from_bits(self.shared.rate.load(Ordering::SeqCst))
+    }
+
+    fn set_decimation(&mut self, factor: usize) -> Result<usize, SourceError> {
+        let f = Decimator::new(factor, 1.0).factor();
+        self.shared.decimation.store(f as u64, Ordering::SeqCst);
+        Ok(f)
     }
 
     fn set_gain(&mut self, db: Option<f32>) -> Result<(), SourceError> {

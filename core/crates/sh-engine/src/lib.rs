@@ -85,6 +85,8 @@ struct Inner {
     dsp_thread: Mutex<Option<JoinHandle<()>>>,
     dropped: Mutex<Option<Arc<AtomicU64>>>,
     running: AtomicBool,
+    /// Decimation the running source applies (1 = none): the span is rate / decim
+    decim: std::sync::atomic::AtomicUsize,
     quit: AtomicBool,
     time_shift: Mutex<(f64, f64)>, // (seconds added to the clock, LOS of the simulated pass)
     work: Mutex<Sender<Work>>,
@@ -139,6 +141,8 @@ enum Cmd {
     BiasTee { on: bool },
     /// Receiver frequency correction, ppm
     Ppm { ppm: f64 },
+    /// Decimate the receiver stream by 1, 2, 4 or 8 (restarts the source)
+    Decimation { factor: usize },
     Rate { hz: f64 },
     Fft { size: usize },
     Squelch { db: Option<f32> },
@@ -196,6 +200,7 @@ impl Engine {
             dsp_thread: Mutex::new(None),
             dropped: Mutex::new(None),
             running: AtomicBool::new(false),
+            decim: std::sync::atomic::AtomicUsize::new(1),
             quit: AtomicBool::new(false),
             time_shift: Mutex::new((0.0, 0.0)),
             work: Mutex::new(wtx),
@@ -358,6 +363,24 @@ impl Engine {
                 }
                 i.save();
                 Ok(json!({}))
+            }
+            Cmd::Decimation { factor } => {
+                let f = match factor {
+                    0 | 1 => 1,
+                    2 | 3 => 2,
+                    4..=7 => 4,
+                    _ => 8,
+                };
+                let was = i.running.load(Ordering::SeqCst);
+                if was {
+                    stop(i);
+                }
+                lock(&i.cfg).decimation = f;
+                i.save();
+                if was {
+                    start(i)?;
+                }
+                Ok(json!({ "factor": f }))
             }
             Cmd::Rate { hz } => {
                 let was = i.running.load(Ordering::SeqCst);
@@ -604,6 +627,8 @@ fn start(i: &Arc<Inner>) -> Result<(), String> {
     src.set_frequency(center).map_err(|e| e.to_string())?;
     src.set_gain(c.gain).map_err(|e| e.to_string())?;
     src.set_ppm(c.ppm).map_err(|e| e.to_string())?;
+    let decim = src.set_decimation(c.decimation).map_err(|e| e.to_string())?.max(1);
+    i.decim.store(decim, Ordering::SeqCst);
     if src.has_bias_tee() {
         src.set_bias_tee(c.bias_tee).map_err(|e| e.to_string())?;
     }
@@ -623,7 +648,8 @@ fn start(i: &Arc<Inner>) -> Result<(), String> {
     // The VFO must be inside the new span
     let vfo = lock(&i.cfg).vfo_hz;
     tune(i, vfo)?;
-    i.note(format!("started {} at {:.3} MHz, {:.3} MS/s", info.name, center / 1e6, rate / 1e6));
+    let d = if decim > 1 { format!(", decimation {decim} ({:.0} kS/s)", rate / decim as f64 / 1e3) } else { String::new() };
+    i.note(format!("started {} at {:.3} MHz, {:.3} MS/s{d}", info.name, center / 1e6, rate / 1e6));
     Ok(())
 }
 
@@ -652,7 +678,8 @@ fn set_center(i: &Inner, hz: f64) -> Result<f64, String> {
 fn tune(i: &Inner, hz: f64) -> Result<(), String> {
     let (center, rate, bw, centered) = {
         let c = lock(&i.cfg);
-        (c.center_hz, c.rate, c.bw, c.center_tuning)
+        // the span the DSP sees: the hardware rate over the decimation
+        (c.center_hz, c.rate / i.decim.load(Ordering::SeqCst).max(1) as f64, c.bw, c.center_tuning)
     };
     if centered {
         let c = set_center(i, hz)?;
@@ -1048,6 +1075,7 @@ fn status(i: &Inner) -> Value {
         "center_tuning": c.center_tuning,
         "bias_tee": c.bias_tee,
         "ppm": c.ppm,
+        "decimation": c.decimation,
         "has_bias_tee": c.source == "rtl",
         "rate": c.rate,
         "mode": c.mode,
@@ -1216,6 +1244,29 @@ mod tests {
         let st = cmd(&e, r#"{"cmd":"status"}"#);
         assert_eq!(st["vfo_hz"].as_f64(), Some(102e6));
         assert_eq!(st["center_tuning"], true);
+    }
+
+    #[test]
+    fn decimation_narrows_the_span_and_keeps_the_vfo_inside() {
+        let d = tmpdir("decim");
+        write_iss(&d);
+        Config { update_days: 0.0, rate: 2_400_000.0, ..Config::default() }.save(&d.join("config.json"));
+        let e = Engine::new(&d);
+        cmd(&e, r#"{"cmd":"source","id":"demo"}"#);
+        assert_eq!(cmd(&e, r#"{"cmd":"decimation","factor":8}"#)["factor"], 8);
+        cmd(&e, r#"{"cmd":"tune","hz":145800000}"#);
+        std::thread::sleep(Duration::from_millis(500));
+        let st = cmd(&e, r#"{"cmd":"status"}"#);
+        assert_eq!(st["decimation"], 8);
+        assert_eq!(st["spectrum_rate"].as_f64(), Some(300_000.0));
+        let (c, v) = (st["spectrum_center_hz"].as_f64().unwrap(), st["vfo_hz"].as_f64().unwrap());
+        assert!((v - c).abs() < 0.45 * 300_000.0, "vfo {v} outside the decimated span around {c}");
+        // and back to the full span
+        cmd(&e, r#"{"cmd":"decimation","factor":1}"#);
+        std::thread::sleep(Duration::from_millis(500));
+        let st = cmd(&e, r#"{"cmd":"status"}"#);
+        assert_eq!(st["spectrum_rate"].as_f64(), Some(2_400_000.0));
+        cmd(&e, r#"{"cmd":"stop"}"#);
     }
 
     #[test]

@@ -383,6 +383,7 @@ struct Shared {
     freq: AtomicU64, // f64 bits
     rate: AtomicU64,
     gain: AtomicU64,
+    decimation: AtomicU64,
     run: AtomicBool,
 }
 
@@ -399,6 +400,7 @@ impl DemoSource {
                 freq: AtomicU64::new(100e6f64.to_bits()),
                 rate: AtomicU64::new(RATES[0].to_bits()),
                 gain: AtomicU64::new(25.4f64.to_bits()),
+                decimation: AtomicU64::new(1),
                 run: AtomicBool::new(false),
             }),
             sat,
@@ -430,6 +432,8 @@ impl Source for DemoSource {
             let mut world = World::new();
             let mut next = Instant::now();
             let mut buf = Vec::new();
+            let mut dec: Option<(sh_dsp::filter::Decimator, f64)> = None;
+            let mut dbuf = Vec::new();
             while sh.run.load(Ordering::SeqCst) {
                 let fs = f64::from_bits(sh.rate.load(Ordering::Relaxed));
                 let f0 = f64::from_bits(sh.freq.load(Ordering::Relaxed));
@@ -437,7 +441,18 @@ impl Source for DemoSource {
                 let n = ((fs / 100.0) as usize).max(1000); // 10 ms blocks
                 world.set_sat(sat.lock().ok().and_then(|g| *g));
                 world.render(f0, fs, gain, &mut buf, n);
-                if !sink.push(Block { center_hz: f0, rate: fs, samples: std::mem::take(&mut buf) }) {
+                let d = sh.decimation.load(Ordering::Relaxed) as usize;
+                let (samples, rate) = if d > 1 {
+                    if !matches!(&dec, Some((x, r)) if x.factor() == d && *r == fs) {
+                        dec = Some((sh_dsp::filter::Decimator::new(d, fs), fs));
+                    }
+                    let (x, _) = dec.as_mut().unwrap();
+                    x.process(&buf, &mut dbuf);
+                    (std::mem::take(&mut dbuf), fs / x.factor() as f64)
+                } else {
+                    (std::mem::take(&mut buf), fs)
+                };
+                if !sink.push(Block { center_hz: f0, rate, samples }) {
                     break;
                 }
                 // Real-time pacing
@@ -491,6 +506,12 @@ impl Source for DemoSource {
     fn set_gain(&mut self, db: Option<f32>) -> Result<(), SourceError> {
         self.shared.gain.store((db.unwrap_or(25.4) as f64).to_bits(), Ordering::Relaxed);
         Ok(())
+    }
+
+    fn set_decimation(&mut self, factor: usize) -> Result<usize, SourceError> {
+        let f = sh_dsp::filter::Decimator::new(factor, 1.0).factor();
+        self.shared.decimation.store(f as u64, Ordering::Relaxed);
+        Ok(f)
     }
 }
 

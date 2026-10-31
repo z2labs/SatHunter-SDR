@@ -821,6 +821,7 @@ dependencies = [
  "log",
  "nusb",
  "rtl-sdr-rs",
+ "rustfft",
  "sh-dsp",
  "thiserror 2.0.21",
 ]

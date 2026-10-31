@@ -71,6 +71,18 @@ fun SettingsScreen(
                 FilterChip(selected = st.rate == r, onClick = { engine.rate(r) }, label = { Text(if (r >= 1e6) "%.3f MS/s".format(r / 1e6) else "%.1f kS/s".format(r / 1e3)) })
             }
         }
+        if (st.source != "esp") {
+            // Like SDR++'s decimation: a narrower span with finer FFT bins and less CPU
+            Text("Decimation", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (d in listOf(1, 2, 4, 8)) {
+                    val span = st.rate / d
+                    val label = if (d == 1) "Off" else "/$d · " + if (span >= 1e6) "%.1f MHz".format(span / 1e6) else "%.0f kHz".format(span / 1e3)
+                    FilterChip(selected = st.decimation == d, onClick = { engine.decimation(d) }, label = { Text(label) })
+                }
+            }
+            Text("Narrows the spectrum around the VFO: weak beacons stand out more, the phone works less.", color = Dim, fontSize = 12.sp)
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("Center tuning", fontSize = 14.sp)

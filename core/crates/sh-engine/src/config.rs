@@ -38,6 +38,8 @@ pub struct Config {
     pub bias_tee: bool,
     /// Receiver crystal error, ppm (RTL-SDR); read it off a known signal, e.g. a beacon
     pub ppm: f64,
+    /// Decimation of the receiver stream: 1 (off), 2, 4, 8
+    pub decimation: usize,
     /// Last VFO frequency per source ("demo", "rtl", "esp")
     pub freqs: std::collections::BTreeMap<String, f64>,
 }
@@ -69,6 +71,7 @@ impl Default for Config {
             center_tuning: false,
             bias_tee: false,
             ppm: 0.0,
+            decimation: 1,
             freqs: Default::default(),
         }
     }

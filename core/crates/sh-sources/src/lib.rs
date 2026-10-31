@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 pub mod demo;
 pub mod esp;
+pub mod rfsim;
 pub mod rtl;
 pub mod usb;
 
@@ -87,6 +88,11 @@ pub trait Source: Send {
     }
     fn set_bias_tee(&mut self, _on: bool) -> Result<(), SourceError> {
         Err(SourceError::Device("this receiver has no bias tee".into()))
+    }
+    /// Decimate the stream by 1, 2, 4 or 8 before it reaches the engine (narrower span, finer
+    /// FFT bins, less CPU). Takes effect when the source starts. Returns the factor used.
+    fn set_decimation(&mut self, _factor: usize) -> Result<usize, SourceError> {
+        Ok(1)
     }
     /// Frequency correction of the receiver's crystal, ppm (positive = it runs fast)
     fn set_ppm(&mut self, _ppm: f64) -> Result<(), SourceError> {

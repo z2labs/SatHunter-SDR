@@ -35,8 +35,9 @@ pub struct FirDecim {
 }
 
 impl FirDecim {
-    pub fn new(taps: Vec<f32>, decim: usize) -> Self {
+    pub fn new(mut taps: Vec<f32>, decim: usize) -> Self {
         let n = taps.len();
+        taps.reverse(); // stored reversed: the inner loop walks both forwards (vectorises)
         FirDecim { taps, decim: decim.max(1), hist: vec![Complex32::new(0.0, 0.0); n - 1], phase: 0 }
     }
 
@@ -47,19 +48,51 @@ impl FirDecim {
         // Output sample k uses hist[k .. k + n]
         let mut k = self.phase;
         while k + n <= self.hist.len() {
-            let w = &self.hist[k..k + n];
-            let (mut re, mut im) = (0.0f32, 0.0f32);
-            for (s, t) in w.iter().zip(self.taps.iter().rev()) {
-                re += s.re * t;
-                im += s.im * t;
-            }
-            out.push(Complex32::new(re, im));
+            out.push(dot_c(&self.hist[k..k + n], &self.taps));
             k += self.decim;
         }
         let consumed = k.min(self.hist.len() - (n - 1));
         self.phase = k - consumed;
         self.hist.drain(..consumed);
     }
+}
+
+/// Complex samples times real taps, summed. Eight partial sums so the compiler can keep them
+/// in vector registers (a single running sum is a serial dependency chain).
+#[inline]
+fn dot_c(x: &[Complex32], t: &[f32]) -> Complex32 {
+    let mut re = [0.0f32; 8];
+    let mut im = [0.0f32; 8];
+    let xc = x.chunks_exact(8);
+    let tc = t.chunks_exact(8);
+    let (xr, tr) = (xc.remainder(), tc.remainder());
+    for (a, b) in xc.zip(tc) {
+        for j in 0..8 {
+            re[j] += a[j].re * b[j];
+            im[j] += a[j].im * b[j];
+        }
+    }
+    let mut r: f32 = re.iter().sum();
+    let mut i: f32 = im.iter().sum();
+    for (a, b) in xr.iter().zip(tr.iter()) {
+        r += a.re * b;
+        i += a.im * b;
+    }
+    Complex32::new(r, i)
+}
+
+#[inline]
+fn dot_r(x: &[f32], t: &[f32]) -> f32 {
+    let mut acc = [0.0f32; 8];
+    let xc = x.chunks_exact(8);
+    let tc = t.chunks_exact(8);
+    let (xr, tr) = (xc.remainder(), tc.remainder());
+    for (a, b) in xc.zip(tc) {
+        for j in 0..8 {
+            acc[j] += a[j] * b[j];
+        }
+    }
+    acc.iter().sum::<f32>() + xr.iter().zip(tr.iter()).map(|(a, b)| a * b).sum::<f32>()
 }
 
 /// Real FIR (no decimation).
@@ -70,18 +103,72 @@ pub struct Fir {
 }
 
 impl Fir {
-    pub fn new(taps: Vec<f32>) -> Self {
+    pub fn new(mut taps: Vec<f32>) -> Self {
         let n = taps.len();
+        taps.reverse();
         Fir { taps, hist: vec![0.0; n - 1] }
     }
     pub fn process(&mut self, x: &[f32], out: &mut Vec<f32>) {
         let n = self.taps.len();
         self.hist.extend_from_slice(x);
         for k in 0..x.len() {
-            let w = &self.hist[k..k + n];
-            out.push(w.iter().zip(self.taps.iter().rev()).map(|(a, b)| a * b).sum());
+            out.push(dot_r(&self.hist[k..k + n], &self.taps));
         }
         self.hist.drain(..x.len());
+    }
+}
+
+/// Decimation by 2, 4 or 8 (a cascade of /2 stages), like SDR++'s source decimation: a
+/// narrower span at a lower rate, so less CPU and finer FFT bins for the same FFT size. The
+/// central 84% of the output band is kept flat and alias-free.
+#[derive(Debug, Clone)]
+pub struct Decimator {
+    factor: usize,
+    stages: Vec<FirDecim>,
+    tmp: Vec<Complex32>,
+}
+
+impl Decimator {
+    /// `factor` 1, 2, 4 or 8 (other values are rounded down to one of these).
+    pub fn new(factor: usize, fs_in: f64) -> Self {
+        let factor = match factor {
+            0 | 1 => 1,
+            2 | 3 => 2,
+            4..=7 => 4,
+            _ => 8,
+        };
+        let fs_out = fs_in / factor as f64;
+        let pass = 0.42 * fs_out;
+        let mut stages = Vec::new();
+        let mut fs = fs_in;
+        while fs > fs_out * 1.5 {
+            // After this stage the rate is fs/2: everything that would fold onto [-pass, pass]
+            // (at and beyond fs/2 - pass) must be stopped
+            let stop = fs / 2.0 - pass;
+            stages.push(FirDecim::new(lowpass((pass + stop) / 2.0, stop - pass, fs), 2));
+            fs /= 2.0;
+        }
+        Decimator { factor, stages, tmp: Vec::new() }
+    }
+
+    pub fn factor(&self) -> usize {
+        self.factor
+    }
+
+    /// Decimate `x` into `out` (cleared first).
+    pub fn process(&mut self, x: &[Complex32], out: &mut Vec<Complex32>) {
+        out.clear();
+        if self.stages.is_empty() {
+            out.extend_from_slice(x);
+            return;
+        }
+        let mut cur: Vec<Complex32> = x.to_vec();
+        for st in self.stages.iter_mut() {
+            self.tmp.clear();
+            st.process(&cur, &mut self.tmp);
+            std::mem::swap(&mut cur, &mut self.tmp);
+        }
+        out.extend_from_slice(&cur);
     }
 }
 
@@ -145,5 +232,24 @@ mod tests {
         }
         assert_eq!(a.len(), b.len());
         assert!(a.iter().zip(b.iter()).all(|(p, q)| (p - q).norm() < 1e-5));
+    }
+
+    #[test]
+    fn decimator_by_8_keeps_the_band_and_rejects_aliases() {
+        let fs = 2_400_000.0;
+        for (hz, inside) in [(100_000.0, true), (-120_000.0, true), (200_000.0, false), (-450_000.0, false), (1_000_000.0, false)] {
+            let mut d = Decimator::new(8, fs);
+            let mut out = Vec::new();
+            d.process(&tone(hz, fs, 240_000), &mut out);
+            assert_eq!(out.len(), 30_000);
+            let p = power(&out[out.len() / 2..]);
+            if inside {
+                assert!((p - 1.0).abs() < 0.05, "{hz} Hz: passband power {p}");
+            } else {
+                assert!(p < 1e-4, "{hz} Hz: alias power {p}");
+            }
+        }
+        assert_eq!(Decimator::new(1, fs).factor(), 1);
+        assert_eq!(Decimator::new(4, fs).factor(), 4);
     }
 }

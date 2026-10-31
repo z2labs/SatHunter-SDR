@@ -60,16 +60,24 @@ fn cw_beat(bw: f64) -> f64 {
 #[derive(Debug, Clone)]
 struct Agc {
     gain: f32,
+    /// per-sample constants, scaled so the timing is the same at any rate (tuned at 48 kHz)
+    attack: f32,
+    decay: f32,
 }
 
 impl Agc {
+    fn new(fs: f64) -> Agc {
+        let k = (AUDIO_RATE / fs) as f32;
+        Agc { gain: 1.0, attack: (0.01 * k).min(0.5), decay: 2e-5 * k }
+    }
+
     fn step(&mut self, x: f32) -> f32 {
         let y = x * self.gain;
         let a = y.abs();
         if a > 0.5 {
-            self.gain *= 1.0 - 0.01 * (a - 0.5).min(1.0); // fast attack
+            self.gain *= 1.0 - self.attack * (a - 0.5).min(1.0); // fast attack
         } else {
-            self.gain *= 1.0 + 2e-5; // slow decay
+            self.gain *= 1.0 + self.decay; // slow decay
         }
         self.gain = self.gain.clamp(1e-3, 1e6);
         y.clamp(-1.0, 1.0)
@@ -89,6 +97,8 @@ pub struct Demodulator {
     ssb_back: Nco,
     ssb_fir: Option<crate::filter::FirDecim>,
     audio_fir: Fir,
+    post_fir: Option<Fir>,
+    post_in: Vec<f32>,
     deemph: f32,
     deemph_a: f32,
     // Resampler state
@@ -108,8 +118,18 @@ pub struct Demodulator {
 impl Demodulator {
     pub fn new(mode: Mode, fs_in: f64, offset: f64, bw: f64) -> Self {
         let bw = if bw > 0.0 { bw } else { mode.default_bw() };
+        let narrow = matches!(mode, Mode::Usb | Mode::Lsb | Mode::Cw);
+        let audio_cut = match mode {
+            Mode::Wfm => 15_000.0,
+            Mode::Cw => (cw_beat(bw) + bw / 2.0 + 200.0).max(1_200.0),
+            Mode::Usb | Mode::Lsb => bw.min(3_500.0),
+            _ => 4_000.0,
+        };
+        // SSB / CW: the sharp sideband filter runs at ~12 kHz instead of 48 kHz (4x fewer taps
+        // at 4x fewer samples); the audio is brought to 48 kHz afterwards and cleaned there
         let min_rate = match mode {
             Mode::Wfm => 200_000.0,
+            _ if narrow => (2.0 * audio_cut + 4_000.0).max(12_000.0),
             _ => AUDIO_RATE,
         };
         let chan_bw = match mode {
@@ -123,11 +143,12 @@ impl Demodulator {
             Mode::Wfm => 75_000.0,
             _ => (bw / 2.0 - 3000.0).max(2500.0),
         };
-        let audio_cut = match mode {
-            Mode::Wfm => 15_000.0,
-            Mode::Cw => (cw_beat(bw) + bw / 2.0 + 200.0).max(1_200.0),
-            Mode::Usb | Mode::Lsb => bw.min(3_500.0),
-            _ => 4_000.0,
+        // Images of the linear interpolation start at fs_ch - audio_cut
+        let post_fir = if narrow && fs_ch < AUDIO_RATE * 0.9 {
+            let room = (fs_ch - 2.0 * audio_cut).max(1_000.0);
+            Some(Fir::new(lowpass(audio_cut + room / 2.0, room, AUDIO_RATE)))
+        } else {
+            None
         };
         // Sideband filter: shift the wanted half to be centred on 0, filter, shift back
         let (ssb_shift, ssb_fir) = match mode {
@@ -149,11 +170,13 @@ impl Demodulator {
             last: Complex32::new(1.0, 0.0),
             fm_gain: (fs_ch / (2.0 * std::f64::consts::PI * dev)) as f32,
             dc: DcBlock::default(),
-            agc: Agc { gain: 1.0 },
+            agc: Agc::new(fs_ch),
             ssb_nco: Nco::new(ssb_shift, fs_ch),
             ssb_back: Nco::new(back, fs_ch),
             ssb_fir,
             audio_fir: Fir::new(lowpass(audio_cut, audio_cut * 0.3, fs_ch)),
+            post_fir,
+            post_in: Vec::new(),
             deemph: 0.0,
             deemph_a,
             pos: 0.0,
@@ -233,14 +256,23 @@ impl Demodulator {
         self.filt.clear();
         self.audio_fir.process(&self.raw, &mut self.filt);
         // Linear resampler fs_ch -> 48 kHz (input is already low-passed below 15 kHz)
+        self.post_in.clear();
         for &s in &self.filt {
             while self.pos < 1.0 {
                 let y = self.prev + (s - self.prev) * self.pos as f32;
-                audio.push(if open { y.clamp(-1.0, 1.0) } else { 0.0 });
+                self.post_in.push(y);
                 self.pos += self.step;
             }
             self.pos -= 1.0;
             self.prev = s;
+        }
+        let start = audio.len();
+        match self.post_fir.as_mut() {
+            Some(f) => f.process(&self.post_in, audio),
+            None => audio.extend_from_slice(&self.post_in),
+        }
+        for y in audio[start..].iter_mut() {
+            *y = if open { y.clamp(-1.0, 1.0) } else { 0.0 };
         }
     }
 

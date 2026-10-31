@@ -340,7 +340,10 @@ private fun TopBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(start = 4.dp)) {
                 LevelLine(st)
-                val src = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
+                val base = if (st.sourceStatus.isNotEmpty()) "${st.sourceName} · ${st.sourceStatus}" else st.sourceName
+                // Blocks lost because the DSP fell behind: the spectrum and audio are then not
+                // what is on the air; show it instead of hiding it
+                val src = if (st.dropped > 0) "$base · ${st.dropped} blocks dropped (CPU)" else base
                 if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Volume(muted, onMute, volume, onVolume, Modifier.width(130.dp))

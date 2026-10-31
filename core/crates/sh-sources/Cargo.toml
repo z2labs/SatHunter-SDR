@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 sh-dsp = { path = "../sh-dsp" }
+rustfft.workspace = true
 thiserror.workspace = true
 log.workspace = true
 nusb = "0.2"
