@@ -39,6 +39,7 @@ data class Status(
     val centerTuning: Boolean = false,
     val biasTee: Boolean = false,
     val hasBiasTee: Boolean = false,
+    val ppm: Double = 0.0,
 )
 
 data class PassInfo(
@@ -263,6 +264,7 @@ class Engine(dataDir: String) {
     fun followGps(on: Boolean) = async("follow_gps", JSONObject().put("on", on))
     fun centerTuning(on: Boolean) = async("center_tuning", JSONObject().put("on", on))
     fun biasTee(on: Boolean) = async("bias_tee", JSONObject().put("on", on))
+    fun ppm(ppm: Double) = async("ppm", JSONObject().put("ppm", ppm))
     fun filter(f: FilterState) = async("filter", JSONObject().put("filter", f.toJson())) { refreshList() }
     fun favourite(norad: Long, on: Boolean) = async("favourite", JSONObject().put("norad", norad).put("on", on)) { refreshList() }
     fun satUpdate() = async("sat_update")
@@ -288,6 +290,7 @@ class Engine(dataDir: String) {
             centerTuning = centered,
             biasTee = j.optBoolean("bias_tee"),
             hasBiasTee = j.optBoolean("has_bias_tee"),
+            ppm = j.optDouble("ppm", 0.0),
             rate = j.optDouble("rate"),
             mode = j.optString("mode"),
             bw = j.optDouble("bw"),

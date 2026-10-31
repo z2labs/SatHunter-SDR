@@ -137,6 +137,8 @@ enum Cmd {
     Gain { db: Option<f32> },
     /// 4.5 V on the antenna input for an LNA (RTL-SDR)
     BiasTee { on: bool },
+    /// Receiver frequency correction, ppm
+    Ppm { ppm: f64 },
     Rate { hz: f64 },
     Fft { size: usize },
     Squelch { db: Option<f32> },
@@ -340,6 +342,15 @@ impl Engine {
                 i.save();
                 Ok(json!({}))
             }
+            Cmd::Ppm { ppm } => {
+                let ppm = ppm.clamp(-200.0, 200.0);
+                lock(&i.cfg).ppm = ppm;
+                if let Some(s) = lock(&i.source).as_mut() {
+                    s.set_ppm(ppm).map_err(|e| e.to_string())?;
+                }
+                i.save();
+                Ok(json!({}))
+            }
             Cmd::Gain { db } => {
                 lock(&i.cfg).gain = db;
                 if let Some(s) = lock(&i.source).as_mut() {
@@ -361,7 +372,7 @@ impl Engine {
                 Ok(json!({}))
             }
             Cmd::Fft { size } => {
-                let size = size.clamp(256, 16384).next_power_of_two();
+                let size = size.clamp(256, 16384).next_power_of_two().min(16384);
                 lock(&i.cfg).fft_size = size;
                 i.bump_params(|p| p.fft_size = size);
                 i.save();
@@ -592,6 +603,7 @@ fn start(i: &Arc<Inner>) -> Result<(), String> {
     let center = c.center_hz.clamp(info.min_hz, info.max_hz);
     src.set_frequency(center).map_err(|e| e.to_string())?;
     src.set_gain(c.gain).map_err(|e| e.to_string())?;
+    src.set_ppm(c.ppm).map_err(|e| e.to_string())?;
     if src.has_bias_tee() {
         src.set_bias_tee(c.bias_tee).map_err(|e| e.to_string())?;
     }
@@ -1035,6 +1047,7 @@ fn status(i: &Inner) -> Value {
         "vfo_hz": c.vfo_hz,
         "center_tuning": c.center_tuning,
         "bias_tee": c.bias_tee,
+        "ppm": c.ppm,
         "has_bias_tee": c.source == "rtl",
         "rate": c.rate,
         "mode": c.mode,
@@ -1161,7 +1174,7 @@ mod tests {
         let d = tmpdir("demo");
         write_iss(&d);
         // No download in the test: cache is fresh and auto update off
-        Config { update_days: 0.0, rate: 1_024_000.0, ..Config::default() }.save(&d.join("config.json"));
+        Config { update_days: 0.0, rate: 1_024_000.0, fft_size: 2048, ..Config::default() }.save(&d.join("config.json"));
         let e = Engine::new(&d);
         assert_eq!(cmd(&e, r#"{"cmd":"start"}"#)["ok"], true);
         std::thread::sleep(Duration::from_millis(600));

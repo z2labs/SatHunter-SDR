@@ -80,7 +80,7 @@ fun SettingsScreen(
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
             Text("Automatic gain", Modifier.weight(1f), fontSize = 14.sp)
-            Switch(checked = st.gain == null, onCheckedChange = { engine.gain(if (it) null else if (st.source == "esp") 60.0 else 25.4) })
+            Switch(checked = st.gain == null, onCheckedChange = { engine.gain(if (it) null else if (st.source == "esp") 60.0 else 32.8) })
         }
         if (st.gain != null) {
             var g by remember(st.gain) { mutableFloatStateOf(st.gain.toFloat()) }
@@ -101,10 +101,19 @@ fun SettingsScreen(
                 }
                 Switch(checked = st.biasTee, onCheckedChange = { engine.biasTee(it) })
             }
+            // Crystal correction: an RTL-SDR is often 1-2 ppm off, ~0.5-1 kHz at 435 MHz,
+            // enough to put a CW beacon outside its filter
+            var ppmText by remember(st.ppm) { mutableStateOf("%.1f".format(st.ppm)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                OutlinedTextField(ppmText, { ppmText = it }, label = { Text("Frequency correction (ppm)") }, singleLine = true, modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                Button(onClick = { ppmText.replace(',', '.').toDoubleOrNull()?.let { engine.ppm(it) } }) { Text("Set") }
+            }
+            Text("Tune to a known signal; if it shows X Hz too high at F MHz, enter X / F (e.g. +600 Hz at 435 MHz = 1.4).", color = Dim, fontSize = 12.sp)
         }
         Text("FFT size", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (n in listOf(1024, 2048, 4096, 8192)) {
+            for (n in listOf(2048, 4096, 8192, 16384)) {
                 FilterChip(selected = st.bins == n, onClick = { engine.fft(n) }, label = { Text("$n") })
             }
         }

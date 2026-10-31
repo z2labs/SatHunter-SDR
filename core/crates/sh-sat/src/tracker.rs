@@ -24,7 +24,8 @@ pub fn demod_for(t: &Transmitter) -> (Demod, f64) {
     }
     match m.as_str() {
         "LSB" => (Demod::Lsb, 2800.0),
-        "CW" => (Demod::Cw, 500.0),
+        // 2 kHz: the beacon is rarely exactly on the database frequency
+        "CW" => (Demod::Cw, 2000.0),
         "AM" => (Demod::Am, 10_000.0),
         "FM" | "AFSK" | "FMN" | "APRS" => (Demod::Nfm, 16_000.0),
         // Data modes: NFM wide enough for the symbol rate, so the signal is seen and heard
@@ -137,7 +138,7 @@ mod tests {
         };
         assert_eq!(demod_for(&tx).0, Demod::Nfm);
         tx.mode = "CW".into();
-        assert_eq!(demod_for(&tx), (Demod::Cw, 500.0));
+        assert_eq!(demod_for(&tx), (Demod::Cw, 2000.0));
         tx.mode = "GMSK".into();
         tx.baud = 9600.0;
         assert_eq!(demod_for(&tx), (Demod::Nfm, 25_200.0));

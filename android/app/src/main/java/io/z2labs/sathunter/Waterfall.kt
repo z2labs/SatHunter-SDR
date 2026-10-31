@@ -227,7 +227,8 @@ class WaterfallRenderer : GLSurfaceView.Renderer {
         floorS += (floor - floorS) * 0.05f
         peakS += (peak - peakS) * 0.05f
         rangeLo = floorS - 6f
-        rangeHi = max(floorS + 45f, peakS + 6f)
+        // At least 30 dB above the floor: a few dB of weak beacon still get a visible colour
+        rangeHi = max(floorS + 30f, peakS + 6f)
     }
 
     override fun onDrawFrame(gl: GL10?) {

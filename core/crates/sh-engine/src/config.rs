@@ -36,6 +36,8 @@ pub struct Config {
     pub center_tuning: bool,
     /// Power an LNA / active antenna through the RTL-SDR input (4.5 V)
     pub bias_tee: bool,
+    /// Receiver crystal error, ppm (RTL-SDR); read it off a known signal, e.g. a beacon
+    pub ppm: f64,
     /// Last VFO frequency per source ("demo", "rtl", "esp")
     pub freqs: std::collections::BTreeMap<String, f64>,
 }
@@ -50,7 +52,7 @@ impl Default for Config {
             bw: 180_000.0,
             rate: 2_400_000.0,
             gain: None,
-            fft_size: 2048,
+            fft_size: 8192,
             fps: 30.0,
             squelch: None,
             station: Station::default(),
@@ -66,6 +68,7 @@ impl Default for Config {
             usb_autostart: true,
             center_tuning: false,
             bias_tee: false,
+            ppm: 0.0,
             freqs: Default::default(),
         }
     }

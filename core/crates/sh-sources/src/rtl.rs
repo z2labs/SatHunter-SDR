@@ -24,6 +24,9 @@ struct Shared {
     pending_gain: AtomicBool,
     bias: AtomicBool,
     pending_bias: AtomicBool,
+    /// Crystal error in ppm (f64 bits): the hardware is tuned to f / (1 + ppm), the blocks
+    /// carry the true frequency
+    ppm: AtomicU64,
     run: AtomicBool,
     status: Mutex<String>,
 }
@@ -46,12 +49,22 @@ impl RtlSource {
                 pending_gain: AtomicBool::new(false),
                 bias: AtomicBool::new(false),
                 pending_bias: AtomicBool::new(false),
+                ppm: AtomicU64::new(0f64.to_bits()),
                 run: AtomicBool::new(false),
                 status: Mutex::new(String::new()),
             }),
             thread: None,
         }
     }
+}
+
+/// Frequency to ask the tuner for, so that a crystal `ppm` off puts the LO on `f`.
+fn hw_freq(f: f64, ppm: f64) -> u32 {
+    (f / (1.0 + ppm * 1e-6)).round() as u32
+}
+
+fn true_freq(hw: f64, ppm: f64) -> f64 {
+    hw * (1.0 + ppm * 1e-6)
 }
 
 fn manual(db: f32) -> TunerGain {
@@ -71,6 +84,9 @@ struct Agc {
 
 impl Agc {
     const START: usize = 14; // 25.4 dB
+    /// Highest automatic gain, 40.2 dB: with an LNA in front, more only lifts the noise and
+    /// the intermodulation (a weak beacon is not helped by filling the ADC with noise)
+    const MAX: usize = 22;
 
     fn new() -> Agc {
         Agc { idx: Self::START, n: 0, sum: 0.0, clips: 0, settle: 0 }
@@ -107,7 +123,7 @@ impl Agc {
             self.idx = self.idx.saturating_sub(3);
         } else if clip > 2e-4 || rms > 0.40 {
             self.idx = self.idx.saturating_sub(1);
-        } else if rms < 0.12 && clip == 0.0 && self.idx + 1 < GAINS.len() {
+        } else if rms < 0.12 && clip == 0.0 && self.idx < Self::MAX {
             self.idx += 1;
         }
         if self.idx != old {
@@ -151,10 +167,11 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     };
     let rate = f64::from_bits(sh.rate.load(Ordering::SeqCst));
     let mut center = f64::from_bits(sh.freq.load(Ordering::SeqCst));
+    let mut ppm = f64::from_bits(sh.ppm.load(Ordering::SeqCst));
     let gain = *sh.gain.lock().unwrap_or_else(|e| e.into_inner());
     let setup = (|| -> Result<(), String> {
         sdr.set_sample_rate(rate as u32).map_err(|e| format!("sample rate: {e:?}"))?;
-        sdr.set_center_freq(center as u32).map_err(|e| format!("frequency: {e:?}"))?;
+        sdr.set_center_freq(hw_freq(center, ppm)).map_err(|e| format!("frequency: {e:?}"))?;
         sdr.set_tuner_gain(manual(gain.unwrap_or(GAINS[Agc::START]))).map_err(|e| format!("gain: {e:?}"))?;
         sdr.set_bias_tee(sh.bias.load(Ordering::SeqCst)).map_err(|e| format!("bias tee: {e:?}"))?;
         sdr.reset_buffer().map_err(|e| format!("reset: {e:?}"))?;
@@ -169,9 +186,8 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     let mut agc = Agc::new();
     let window = (rate * 0.1) as usize; // one decision per 100 ms
     set_status(&sh, status_line(&tuner, v4, rate, gain, &agc, sh.bias.load(Ordering::SeqCst)));
-    sh.pending_bias.store(false, Ordering::SeqCst);
-    sh.pending_freq.store(false, Ordering::SeqCst);
-    sh.pending_gain.store(false, Ordering::SeqCst);
+    // The pending flags are left as they are: a change made while the device was opening
+    // (the engine tunes right after start) is applied below instead of being lost.
     // 32 kB transfers: ~7 ms at 2.4 MS/s, low latency for the waterfall
     let reader = match sdr.into_async_reader(15, 32 * 1024) {
         Ok(r) => r,
@@ -182,7 +198,8 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
     while sh.run.load(Ordering::SeqCst) {
         if sh.pending_freq.swap(false, Ordering::SeqCst) {
             let f = f64::from_bits(sh.freq.load(Ordering::SeqCst));
-            if let Err(e) = ctl.set_center_freq(f as u32) {
+            ppm = f64::from_bits(sh.ppm.load(Ordering::SeqCst));
+            if let Err(e) = ctl.set_center_freq(hw_freq(f, ppm)) {
                 fail(format!("retune: {e:?}"));
             }
         }
@@ -205,7 +222,7 @@ fn worker(id: UsbId, sh: Arc<Shared>, sink: Sink) {
                 fail(format!("USB: {e:?}"));
                 break;
             }
-            Some(Ok(AsyncReadEvent::Reconfigured { change: AsyncReadConfigChange::CenterFrequency(f), .. })) => center = f as f64,
+            Some(Ok(AsyncReadEvent::Reconfigured { change: AsyncReadConfigChange::CenterFrequency(f), .. })) => center = true_freq(f as f64, ppm),
             Some(Ok(AsyncReadEvent::Samples { data, .. })) => {
                 if gain.is_none() {
                     if let Some(db) = agc.feed(&data, window) {
@@ -292,6 +309,12 @@ impl Source for RtlSource {
         Ok(())
     }
 
+    fn set_ppm(&mut self, ppm: f64) -> Result<(), SourceError> {
+        self.shared.ppm.store(ppm.clamp(-200.0, 200.0).to_bits(), Ordering::SeqCst);
+        self.shared.pending_freq.store(true, Ordering::SeqCst); // retune with the new correction
+        Ok(())
+    }
+
     fn status(&self) -> String {
         self.shared.status.lock().map(|s| s.clone()).unwrap_or_default()
     }
@@ -312,6 +335,25 @@ mod tests {
             let ph = k as f32 * 0.1;
             [(127.4 + amp * ph.cos()).round().clamp(0.0, 255.0) as u8, (127.4 + amp * ph.sin()).round().clamp(0.0, 255.0) as u8]
         }).collect()
+    }
+
+    #[test]
+    fn ppm_correction_round_trips() {
+        let f = 435_310_000.0;
+        let hw = hw_freq(f, 1.5);
+        assert!((hw as f64 - f / (1.0 + 1.5e-6)).abs() <= 0.5);
+        assert!((true_freq(hw as f64, 1.5) - f).abs() < 1.0);
+        assert_eq!(hw_freq(f, 0.0), 435_310_000);
+    }
+
+    #[test]
+    fn agc_stops_at_its_ceiling() {
+        let mut a = Agc::new();
+        let quiet = tone(1.0, 1000);
+        for _ in 0..200 {
+            a.feed(&quiet, 1000);
+        }
+        assert_eq!(a.db(), GAINS[Agc::MAX]);
     }
 
     #[test]

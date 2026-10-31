@@ -88,6 +88,10 @@ pub trait Source: Send {
     fn set_bias_tee(&mut self, _on: bool) -> Result<(), SourceError> {
         Err(SourceError::Device("this receiver has no bias tee".into()))
     }
+    /// Frequency correction of the receiver's crystal, ppm (positive = it runs fast)
+    fn set_ppm(&mut self, _ppm: f64) -> Result<(), SourceError> {
+        Ok(())
+    }
     /// Device details or the last error, for the UI
     fn status(&self) -> String {
         String::new()

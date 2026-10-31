@@ -44,9 +44,16 @@ impl Mode {
             Mode::Wfm => 180_000.0,
             Mode::Am => 10_000.0,
             Mode::Usb | Mode::Lsb => 2_800.0,
-            Mode::Cw => 500.0,
+            // Wide enough for a beacon a few hundred Hz off (RTL crystal, satellite TX offset)
+            Mode::Cw => 2_000.0,
         }
     }
+}
+
+/// CW beat note: 700 Hz for a narrow filter; with a wide one, high enough that the whole
+/// passband stays above 0 Hz (a carrier 1 kHz below the VFO is still a tone, not DC).
+fn cw_beat(bw: f64) -> f64 {
+    (bw / 2.0 + 300.0).max(700.0)
 }
 
 /// Simple peak AGC for AM / SSB / CW.
@@ -107,7 +114,7 @@ impl Demodulator {
         };
         let chan_bw = match mode {
             Mode::Usb | Mode::Lsb => 2.0 * bw + 1000.0,
-            Mode::Cw => 3000.0,
+            Mode::Cw => (bw + 2000.0).max(3000.0),
             _ => bw,
         };
         let chan = Channel::new(fs_in, offset, chan_bw, min_rate);
@@ -118,7 +125,7 @@ impl Demodulator {
         };
         let audio_cut = match mode {
             Mode::Wfm => 15_000.0,
-            Mode::Cw => 1_200.0,
+            Mode::Cw => (cw_beat(bw) + bw / 2.0 + 200.0).max(1_200.0),
             Mode::Usb | Mode::Lsb => bw.min(3_500.0),
             _ => 4_000.0,
         };
@@ -130,7 +137,7 @@ impl Demodulator {
             Mode::Cw => (0.0, Some(crate::filter::FirDecim::new(lowpass(bw / 2.0, 150.0, fs_ch), 1))),
             _ => (0.0, None),
         };
-        let back = if mode == Mode::Cw { -700.0 } else { -ssb_shift };
+        let back = if mode == Mode::Cw { -cw_beat(bw) } else { -ssb_shift };
         // WFM de-emphasis 50 us (Europe)
         let tau = 50e-6;
         let deemph_a = (-1.0 / (fs_ch * tau)).exp() as f32;
@@ -309,5 +316,23 @@ mod tests {
         let rms_l = (a2[a2.len() / 2..].iter().map(|v| v * v).sum::<f32>() / (a2.len() / 2) as f32).sqrt();
         let rms_u = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
         assert!(rms_l < rms_u * 0.05, "lsb {rms_l} usb {rms_u}");
+    }
+
+    #[test]
+    fn cw_hears_a_beacon_off_frequency() {
+        let fs = 240_000.0;
+        for off in [-800.0, 0.0, 800.0] {
+            // carrier at 10 kHz + off
+            let mut nco = Nco::new(-(10_000.0 + off), fs);
+            let x: Vec<Complex32> = (0..240_000).map(|_| nco.next() * 0.1).collect();
+            let mut d = Demodulator::new(Mode::Cw, fs, 10_000.0, 0.0);
+            let mut audio = Vec::new();
+            d.process(&x, &mut audio);
+            let tail = &audio[audio.len() / 2..];
+            let want = cw_beat(Mode::Cw.default_bw()) + off;
+            assert!((freq(tail, AUDIO_RATE) - want).abs() < 20.0, "off {off}: {} Hz", freq(tail, AUDIO_RATE));
+            let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+            assert!(rms > 0.1, "off {off}: rms {rms}");
+        }
     }
 }
