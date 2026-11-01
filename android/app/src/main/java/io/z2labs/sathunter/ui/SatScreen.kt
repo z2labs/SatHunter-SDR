@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -62,62 +65,85 @@ import io.z2labs.sathunter.SatRow
 @Composable
 fun SatScreen(list: SatList, detail: SatDetail?, engine: Engine, radarOn: Boolean, onRadar: (Boolean) -> Unit) {
     var showFilter by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize()) {
-        // Data status
-        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                val age = list.ageHours
-                Text(
-                    when {
-                        age == null -> "No satellite data yet"
-                        age < 48 -> "${list.rows.size} passes · data ${age.toInt()} h old"
-                        else -> "${list.rows.size} passes · data ${(age / 24).toInt()} days old"
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text("${list.satellites} satellites, ${list.transmitters} downlinks", color = Dim, fontSize = 12.sp)
-                if (list.status.isNotEmpty()) Text(list.status, color = SatYellow, fontSize = 12.sp)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth > maxHeight) {
+            // Landscape: the height is too small for the header, the selected card and the list
+            // one under the other (the list got no room at all); side by side instead
+            Row(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                    SatHeader(list, engine, showFilter) { showFilter = it }
+                    detail?.let { SelectedCard(it, engine, radarOn, onRadar) }
+                }
+                SatListView(list, detail, engine, Modifier.weight(1f).fillMaxHeight())
             }
-            TextButton(onClick = { showFilter = !showFilter }) { Text(if (showFilter) "Done" else "Filter") }
-            IconButton(onClick = { engine.satUpdate() }, enabled = !list.busy) { Icon(Icons.Filled.Refresh, contentDescription = "Update data") }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                SatHeader(list, engine, showFilter) { showFilter = it }
+                detail?.let { SelectedCard(it, engine, radarOn, onRadar) }
+                SatListView(list, detail, engine, Modifier.weight(1f).fillMaxWidth())
+            }
         }
-        list.progress?.let { (done, total) ->
-            LinearProgressIndicator(progress = { done.toFloat() / maxOf(1, total) }, modifier = Modifier.fillMaxWidth())
-        }
-        if (list.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+}
 
-        // Order: next pass, or the satellites the SatNOGS ground stations hear best
-        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            for ((id, name) in listOf("pass" to "Next pass", "health" to "Best heard")) {
-                FilterChip(selected = list.filter.sort == id, onClick = { engine.filter(list.filter.copy(sort = id)) }, label = { Text(name) })
-            }
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SatHeader(list: SatList, engine: Engine, showFilter: Boolean, onShowFilter: (Boolean) -> Unit) {
+    // Data status
+    Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            val age = list.ageHours
             Text(
-                if (list.filter.sort == "health") "Most reliably received by SatNOGS stations first" else "Soonest pass first",
-                color = Dim, fontSize = 12.sp, maxLines = 2, modifier = Modifier.weight(1f),
+                when {
+                    age == null -> "No satellite data yet"
+                    age < 48 -> "${list.rows.size} passes · data ${age.toInt()} h old"
+                    else -> "${list.rows.size} passes · data ${(age / 24).toInt()} days old"
+                },
+                fontWeight = FontWeight.SemiBold,
             )
+            Text("${list.satellites} satellites, ${list.transmitters} downlinks", color = Dim, fontSize = 12.sp)
+            if (list.status.isNotEmpty()) Text(list.status, color = SatYellow, fontSize = 12.sp)
         }
-        if (showFilter) FilterPanel(list, engine)
+        TextButton(onClick = { onShowFilter(!showFilter) }) { Text(if (showFilter) "Done" else "Filter") }
+        IconButton(onClick = { engine.satUpdate() }, enabled = !list.busy) { Icon(Icons.Filled.Refresh, contentDescription = "Update data") }
+    }
+    list.progress?.let { (done, total) ->
+        LinearProgressIndicator(progress = { done.toFloat() / maxOf(1, total) }, modifier = Modifier.fillMaxWidth())
+    }
+    if (list.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
-        detail?.let { SelectedCard(it, engine, radarOn, onRadar) }
+    // Order: next pass, or the satellites the SatNOGS ground stations hear best
+    Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        for ((id, name) in listOf("pass" to "Next pass", "health" to "Best heard")) {
+            FilterChip(selected = list.filter.sort == id, onClick = { engine.filter(list.filter.copy(sort = id)) }, label = { Text(name) })
+        }
+        Text(
+            if (list.filter.sort == "health") "Most reliably received by SatNOGS stations first" else "Soonest pass first",
+            color = Dim, fontSize = 12.sp, maxLines = 2, modifier = Modifier.weight(1f),
+        )
+    }
+    if (showFilter) FilterPanel(list, engine)
+}
 
-        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-            if (list.rows.isEmpty() && list.ageHours != null && list.progress == null) {
-                item {
-                    Text(
-                        "No pass in the next 24 h for this filter. Try more bands, switch off \"Active only\" or lower the minimum elevation.",
-                        Modifier.padding(16.dp), color = Dim,
-                    )
-                }
+@Composable
+private fun SatListView(list: SatList, detail: SatDetail?, engine: Engine, modifier: Modifier) {
+    LazyColumn(modifier) {
+        if (list.rows.isEmpty() && list.ageHours != null && list.progress == null) {
+            item {
+                Text(
+                    "No pass in the next 24 h for this filter. Try more bands, switch off \"Active only\" or lower the minimum elevation.",
+                    Modifier.padding(16.dp), color = Dim,
+                )
             }
-            for ((title, rows) in sections(list)) {
-                if (rows.isEmpty()) continue
-                item(key = "h:$title") { SectionHeader(title, rows.size) }
-                items(rows, key = { it.norad }) { r ->
-                    SatRowView(r, list.now, selected = detail?.norad == r.norad, onStar = { engine.favourite(r.norad, !r.fav) }) {
-                        engine.select(r.norad)
-                    }
-                    HorizontalDivider(color = Color(0xFF1B2532))
+        }
+        for ((title, rows) in sections(list)) {
+            if (rows.isEmpty()) continue
+            item(key = "h:$title") { SectionHeader(title, rows.size) }
+            items(rows, key = { it.norad }) { r ->
+                SatRowView(r, list.now, selected = detail?.norad == r.norad, onStar = { engine.favourite(r.norad, !r.fav) }) {
+                    engine.select(r.norad)
                 }
+                HorizontalDivider(color = Color(0xFF1B2532))
             }
         }
     }

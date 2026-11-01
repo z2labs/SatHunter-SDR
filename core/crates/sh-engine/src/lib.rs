@@ -1055,6 +1055,17 @@ fn control(i: Arc<Inner>) {
                 }
             }
             lock(&i.sat).others = others;
+            // Downlinks in the span the spectrum shows, for the labels on it
+            let (c, r) = {
+                let o = lock(&i.out);
+                (o.center_hz, o.rate)
+            };
+            let m = if r > 0.0 && i.running.load(Ordering::SeqCst) {
+                sat::markers(&sats, &st, now, c - r / 2.0, c + r / 2.0, sel, 40)
+            } else {
+                Vec::new()
+            };
+            lock(&i.sat).markers = m;
         }
     }
 }
@@ -1096,6 +1107,7 @@ fn status(i: &Inner) -> Value {
         "station": c.station,
         "locator": locator::from_lat_lon(c.station.lat, c.station.lon),
         "follow_gps": c.follow_gps,
+        "markers": lock(&i.sat).markers.clone(),
     })
 }
 
@@ -1266,6 +1278,69 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         let st = cmd(&e, r#"{"cmd":"status"}"#);
         assert_eq!(st["spectrum_rate"].as_f64(), Some(2_400_000.0));
+        cmd(&e, r#"{"cmd":"stop"}"#);
+    }
+
+    /// Spectrum rows for `ms`: (centre, rate, max-hold over the rows).
+    fn collect_rows(e: &Engine, ms: u64) -> (f64, f64, Vec<f32>) {
+        let mut rows = vec![0.0f32; 16384 * 64];
+        let mut meta = vec![0.0f64; 128];
+        let mut hold: Vec<f32> = Vec::new();
+        let (mut c, mut r) = (0.0, 0.0);
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < Duration::from_millis(ms) {
+            let (n, bins) = e.spectrum_rows(&mut rows, &mut meta);
+            for k in 0..n {
+                if hold.len() != bins {
+                    hold = vec![-200.0; bins];
+                }
+                c = meta[2 * k];
+                r = meta[2 * k + 1];
+                for (h, v) in hold.iter_mut().zip(&rows[k * bins..(k + 1) * bins]) {
+                    *h = h.max(*v);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        (c, r, hold)
+    }
+
+    /// The demo's CW beacon (432.400 MHz) through decimation by 8: the span is 300 kHz around
+    /// the VFO, the beacon is in its bin and well above the noise, and the CW audio comes.
+    #[test]
+    fn decimated_demo_beacon_is_where_it_should_be() {
+        let d = tmpdir("decim_cw");
+        write_iss(&d);
+        Config { update_days: 0.0, rate: 2_400_000.0, fft_size: 8192, ..Config::default() }.save(&d.join("config.json"));
+        let e = Engine::new(&d);
+        cmd(&e, r#"{"cmd":"source","id":"demo"}"#);
+        cmd(&e, r#"{"cmd":"decimation","factor":8}"#);
+        cmd(&e, r#"{"cmd":"mode","mode":"CW"}"#);
+        cmd(&e, r#"{"cmd":"tune","hz":432400000}"#);
+        std::thread::sleep(Duration::from_millis(300));
+        e.spectrum_rows(&mut vec![0.0f32; 16384 * 64], &mut vec![0.0f64; 128]); // drop rows from before the retune
+        let (c, r, hold) = collect_rows(&e, 2500);
+        assert_eq!(r, 300_000.0);
+        assert!((432.4e6 - c).abs() < 0.4 * r, "beacon outside the span: centre {c}");
+        let n = hold.len();
+        let bin_hz = r / n as f64;
+        let peak = hold.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap();
+        let f_peak = c + (peak.0 as f64 - n as f64 / 2.0) * bin_hz;
+        assert!((f_peak - 432.4e6).abs() < 3.0 * bin_hz.max(100.0), "peak at {f_peak} Hz");
+        let mut sorted = hold.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = sorted[n / 2];
+        assert!(peak.1 - median > 15.0, "beacon {} dB over the noise", peak.1 - median);
+        let mut a = vec![0.0f32; 48_000];
+        let mut got = 0;
+        let mut energy = 0.0f32;
+        for _ in 0..20 {
+            let k = e.audio(&mut a);
+            energy += a[..k].iter().map(|v| v * v).sum::<f32>();
+            got += k;
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(got > 20_000 && energy > 1.0, "audio {got} samples, energy {energy}");
         cmd(&e, r#"{"cmd":"stop"}"#);
     }
 

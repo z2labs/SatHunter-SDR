@@ -101,6 +101,7 @@ fun ReceiverScreen(
     onTune: (Double) -> Unit,
     onCenter: (Double) -> Unit,
     onMode: (String) -> Unit,
+    onDecimation: (Int) -> Unit,
     onCompass: () -> Unit,
 ) {
     var viewLo by remember { mutableFloatStateOf(0f) }
@@ -170,7 +171,12 @@ fun ReceiverScreen(
                         detectTapGestures { p ->
                             val s = stNow
                             val u = viewLo + p.x / size.width * (viewHi - viewLo)
-                            val f = shownCenterNow + (u - 0.5) * s.specRate
+                            var f = shownCenterNow + (u - 0.5) * s.specRate
+                            // A tap next to a satellite label tunes exactly onto that downlink
+                            val hzPerPx = (viewHi - viewLo) * s.specRate / size.width
+                            s.markers.minByOrNull { kotlin.math.abs(it.freq - f) }?.let { m ->
+                                if (kotlin.math.abs(m.freq - f) < 16.dp.toPx() * hzPerPx) f = m.freq
+                            }
                             if (s.centerTuning) moveCenter(f) else onTune(f)
                         }
                     }
@@ -232,6 +238,32 @@ fun ReceiverScreen(
                     drawText(m, topLeft = Offset(tx, specH - 6.dp.toPx() - m.size.height))
                     f += step
                 }
+                // Satellites in the span (from the predictions and the downlink list, Doppler
+                // included): a dashed line through spectrum and waterfall, a label on top. Labels
+                // go into up to four lanes so close ones do not overlap.
+                val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()))
+                val lanes = FloatArray(4) { -1e9f }
+                val labelStyle = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                for (m in s.markers.sortedBy { it.freq }) {
+                    val c = if (m.selected) Up else SatYellow
+                    if (m.high > m.low) {
+                        val la = x(m.low)
+                        val lb = x(m.high)
+                        if (lb > 0 && la < w) drawRect(c.copy(alpha = 0.10f), Offset(la, 0f), Size(max(2f, lb - la), size.height))
+                    }
+                    val px = x(m.freq)
+                    if (px < -50f || px > w + 50f) continue
+                    drawLine(c.copy(alpha = 0.55f), Offset(px, 0f), Offset(px, size.height), 1.2.dp.toPx(), pathEffect = dash)
+                    val txt = measurer.measure("${m.name.take(12)} ${m.mode} ${"%.0f".format(m.el)}°", labelStyle.copy(color = c))
+                    val lw = txt.size.width + 6.dp.toPx()
+                    val left = min(max(0f, px - lw / 2), w - lw)
+                    val lane = lanes.indexOfFirst { it < left - 2.dp.toPx() }
+                    if (lane < 0) continue
+                    lanes[lane] = left + lw
+                    val top = 2.dp.toPx() + lane * (txt.size.height + 3.dp.toPx())
+                    drawRoundRect(Color(0xCC0A0F16), Offset(left, top), Size(lw, txt.size.height.toFloat()), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
+                    drawText(txt, topLeft = Offset(left + 3.dp.toPx(), top))
+                }
                 // Divider between spectrum and waterfall
                 drawRect(Color(0xFF0A0E14), Offset(0f, specH - 1.5.dp.toPx()), Size(w, 3.dp.toPx()))
                 drawLine(Color(0xFF6B7F95), Offset(0f, specH), Offset(w, specH), 1.5.dp.toPx())
@@ -286,7 +318,10 @@ fun ReceiverScreen(
                     ) { Icon(Icons.Filled.FullscreenExit, "Exit full screen", Modifier.size(36.dp)) }
                 }
                 Fade(controlsVisible, Modifier.align(Alignment.BottomCenter)) {
-                    ModeRow(st, onMode, Modifier.padding(bottom = 8.dp).background(Glass, RoundedCornerShape(14.dp)))
+                    Column(Modifier.padding(bottom = 8.dp).background(Glass, RoundedCornerShape(14.dp))) {
+                        DecimationRow(st, onDecimation, Modifier)
+                        ModeRow(st, onMode, Modifier)
+                    }
                 }
             }
 
@@ -298,7 +333,10 @@ fun ReceiverScreen(
             }
         }
 
-        if (!fullscreen) ModeRow(st, onMode, Modifier.fillMaxWidth().background(Panel))
+        if (!fullscreen) {
+            DecimationRow(st, onDecimation, Modifier.fillMaxWidth().background(Panel))
+            ModeRow(st, onMode, Modifier.fillMaxWidth().background(Panel))
+        }
     }
 }
 
@@ -367,6 +405,27 @@ private fun Volume(muted: Boolean, onMute: () -> Unit, volume: Float, onVolume: 
             value = volume, onValueChange = onVolume, valueRange = 0f..2f, modifier = Modifier.weight(1f),
             colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
         )
+    }
+}
+
+/** Decimation 1/2/4/8 with the span it gives (the hardware rate stays). */
+@Composable
+private fun DecimationRow(st: Status, onDecimation: (Int) -> Unit, modifier: Modifier) {
+    if (st.source == "esp") return
+    Row(
+        modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Span", color = Dim, fontSize = 12.sp)
+        for (d in listOf(1, 2, 4, 8)) {
+            val span = st.rate / d
+            val label = if (span >= 1e6) "%.1f MHz".format(span / 1e6) else "%.0f kHz".format(span / 1e3)
+            FilterChip(
+                selected = st.decimation == d, onClick = { onDecimation(d) },
+                label = { Text(if (d == 1) label else "$label /$d", fontSize = 12.sp) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Accent.copy(alpha = 0.35f)),
+            )
+        }
     }
 }
 

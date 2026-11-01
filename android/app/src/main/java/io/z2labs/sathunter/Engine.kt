@@ -12,6 +12,19 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** A satellite downlink in the shown span, as received now (Doppler included). */
+data class Marker(
+    val norad: Long,
+    val name: String,
+    val freq: Double,
+    /** Linear transponder passband (0 when a single frequency) */
+    val low: Double,
+    val high: Double,
+    val mode: String,
+    val el: Double,
+    val selected: Boolean,
+)
+
 data class Status(
     val running: Boolean = false,
     val source: String = "demo",
@@ -43,6 +56,7 @@ data class Status(
     val decimation: Int = 1,
     /// Sample blocks the DSP could not keep up with (since the source started)
     val dropped: Long = 0,
+    val markers: List<Marker> = emptyList(),
 )
 
 data class PassInfo(
@@ -311,6 +325,17 @@ class Engine(dataDir: String) {
             altM = st?.optDouble("alt_m") ?: 120.0,
             locator = j.optString("locator"),
             followGps = j.optBoolean("follow_gps", true),
+            markers = j.optJSONArray("markers")?.let { a ->
+                (0 until a.length()).mapNotNull { k ->
+                    a.optJSONObject(k)?.let { m ->
+                        Marker(
+                            norad = m.optLong("norad"), name = m.optString("name"), freq = m.optDouble("freq"),
+                            low = m.optDouble("low", 0.0), high = m.optDouble("high", 0.0), mode = m.optString("mode"),
+                            el = m.optDouble("el", 0.0), selected = m.optBoolean("selected"),
+                        )
+                    }
+                }
+            } ?: emptyList(),
             sourceName = j.optString("source_name"),
             sourceStatus = j.optString("source_status"),
             devices = j.optJSONArray("devices")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),

@@ -46,6 +46,70 @@ pub struct Other {
     pub el: f64,
 }
 
+/// A satellite downlink inside the shown span, where it is heard right now (Doppler included),
+/// for the labels on the spectrum / waterfall.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Marker {
+    pub norad: u64,
+    pub name: String,
+    /// Received frequency now, Hz (centre of a transponder)
+    pub freq: f64,
+    /// Linear transponder passband as received, Hz (0, 0 for a single frequency)
+    pub low: f64,
+    pub high: f64,
+    pub mode: String,
+    pub el: f64,
+    pub selected: bool,
+}
+
+/// Downlinks of the satellites above the horizon that fall in `lo..hi` (Hz), strongest
+/// candidates first (higher elevation), at most `max`.
+pub fn markers(sats: &[Satellite], st: &Station, now: f64, lo: f64, hi: f64, selected: Option<u64>, max: usize) -> Vec<Marker> {
+    // Doppler at 70 cm is at most ~±10 kHz; 2.4 GHz ~±60 kHz: pre-filter with a margin
+    let margin = 30e-6 * hi.abs().max(lo.abs());
+    let mut out = Vec::new();
+    for s in sats {
+        let txs: Vec<&sh_sat::Transmitter> = s
+            .tx
+            .iter()
+            .filter(|t| t.active() && t.centre() > 0.0)
+            .filter(|t| {
+                let (a, b) = if t.is_linear() { (t.down_low, t.down_high) } else { (t.down_low, t.down_low) };
+                b >= lo - margin && a <= hi + margin
+            })
+            .collect();
+        if txs.is_empty() {
+            continue;
+        }
+        let Ok(look) = s.orbit.look(st, now) else { continue };
+        if look.el < 0.0 {
+            continue;
+        }
+        for t in txs {
+            let d = |f: f64| sh_sat::doppler(f, look.range_rate_kms);
+            let (low, high) = if t.is_linear() { (d(t.down_low), d(t.down_high)) } else { (0.0, 0.0) };
+            let freq = d(t.centre());
+            let (a, b) = if t.is_linear() { (low, high) } else { (freq, freq) };
+            if b < lo || a > hi {
+                continue;
+            }
+            out.push(Marker {
+                norad: s.norad,
+                name: s.name.clone(),
+                freq,
+                low,
+                high,
+                mode: t.mode.clone(),
+                el: look.el,
+                selected: selected == Some(s.norad),
+            });
+        }
+    }
+    out.sort_by(|a, b| b.selected.cmp(&a.selected).then(b.el.partial_cmp(&a.el).unwrap_or(std::cmp::Ordering::Equal)));
+    out.truncate(max);
+    out
+}
+
 pub struct SatState {
     pub sats: Arc<Vec<Satellite>>,
     pub stats: LoadStats,
@@ -59,6 +123,8 @@ pub struct SatState {
     pub sel_pass: Option<Pass>,
     pub track: Option<TrackData>,
     pub others: Vec<Other>,
+    /// Downlinks in the shown span (refreshed once a second)
+    pub markers: Vec<Marker>,
     pub last_calc: f64,
 }
 
@@ -77,6 +143,7 @@ impl Default for SatState {
             sel_pass: None,
             track: None,
             others: Vec::new(),
+            markers: Vec::new(),
             last_calc: 0.0,
         }
     }
@@ -241,5 +308,42 @@ mod tests {
         sort_rows(&mut rows, 10.0, db::SortBy::Health);
         let order: Vec<u64> = rows.iter().map(|r| r.norad).collect();
         assert_eq!(order, vec![4, 5, 3, 2, 1]);
+    }
+
+    fn iss() -> Vec<Satellite> {
+        let raw = RawData {
+            transmitters_json: Some(r#"[
+              {"uuid":"aprs","description":"APRS","alive":true,"downlink_low":145825000,"mode":"AFSK","baud":1200,"norad_cat_id":25544,"status":"active","service":"Unknown"},
+              {"uuid":"lin","description":"Lin","alive":true,"downlink_low":435760000,"downlink_high":435800000,"mode":"USB","norad_cat_id":25544,"status":"active","service":"Amateur"},
+              {"uuid":"dead","description":"Dead","alive":false,"downlink_low":435700000,"mode":"CW","norad_cat_id":25544,"status":"inactive","service":"Amateur"}]"#.into()),
+            tle_satnogs_json: Some(r#"[{"tle0":"0 ISS","tle1":"1 25544U 98067A   26282.95044904  .00006711  00000-0  13074-3 0  9998","tle2":"2 25544  51.6315  92.1575 0006672 244.0714 115.9587 15.48795780589546","norad_cat_id":25544}]"#.into()),
+            tle_celestrak_txt: None,
+            satellites_json: Some(r#"[{"name":"ISS","norad_cat_id":25544,"status":"in orbit","countries":"RU,US"}]"#.into()),
+            network_stats_json: None,
+        };
+        db::load(&raw).unwrap().0
+    }
+
+    #[test]
+    fn markers_follow_doppler_and_the_span() {
+        let sats = iss();
+        let st = Station { lat: 47.5, lon: 19.04, alt_m: 120.0 };
+        let epoch = 1_791_000_000.0; // around the TLE epoch (Oct 2026)
+        let find = |cond: &dyn Fn(f64) -> bool| (0..20_000).map(|k| epoch + k as f64 * 30.0).find(|t| sats[0].orbit.look(&st, *t).map(|l| cond(l.el)).unwrap_or(false));
+        let now = find(&|el| el > 10.0).expect("no ISS pass found");
+        let look = sats[0].orbit.look(&st, now).unwrap();
+        // 2 m span: the APRS downlink, Doppler shifted
+        let m = markers(&sats, &st, now, 144.8e6, 146.8e6, Some(25544), 40);
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert!((m[0].freq - sh_sat::doppler(145.825e6, look.range_rate_kms)).abs() < 1.0);
+        assert!(m[0].selected && m[0].mode == "AFSK");
+        // 70 cm span: the transponder with its passband, not the dead CW beacon
+        let m = markers(&sats, &st, now, 435.0e6, 436.0e6, None, 40);
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert!(m[0].low < m[0].high && m[0].low > 435.7e6 && m[0].high < 435.9e6, "{m:?}");
+        // Another band: nothing; below the horizon: nothing
+        assert!(markers(&sats, &st, now, 100e6, 101e6, None, 40).is_empty());
+        let down = find(&|el| el < -20.0).unwrap();
+        assert!(markers(&sats, &st, down, 144.8e6, 146.8e6, None, 40).is_empty());
     }
 }

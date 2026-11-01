@@ -168,6 +168,7 @@ class MainActivity : ComponentActivity() {
                         onTune = { engine.tuneSmooth(it) },
                         onCenter = { engine.centerSmooth(it) },
                         onMode = { engine.mode(it) },
+                        onDecimation = { engine.decimation(it) },
                         onCompass = { setCompass(!compassOn) },
                     )
                     1 -> SatScreen(list, detail, engine, radarOn) {
