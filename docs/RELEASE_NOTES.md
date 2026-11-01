@@ -1,4 +1,4 @@
-# SatHunterSDR 0.2.0 beta 8
+# SatHunterSDR 0.2.0 beta 9
 
 Android satellite-hunting SDR receiver. Install the APK below (allow installs from your browser or
 file manager when asked).
@@ -6,6 +6,30 @@ file manager when asked).
 **Coming from beta 1 or beta 2: uninstall the old app once** (Android says it "conflicts with an
 existing package"). Those builds had a throw-away signature; from beta 3 on every APK is signed
 with the same Z2Labs key and installs over the previous one.
+
+## New in beta 9
+
+First satellite heard and decoded with it: ITUPSAT 1 on 70 cm CW (see docs/MEASUREMENTS.md).
+
+- **Weak signals show up**: the spectrum now averages every FFT between two frames (before, one
+  FFT per frame was taken and ~97 % of the samples were skipped). FFT 8192 by default, 16384
+  selectable. A beacon 10 dB weaker than before is visible.
+- **No more stutter**: the CW demodulator used almost a whole phone CPU core, blocks were dropped
+  silently (choppy audio, a jumpy waterfall). CW is now 10x lighter, SSB / FM 3x. If blocks are
+  still lost the status line says so.
+- **Span / decimation** (/2, /4, /8) right above the mode buttons: a narrower span around the VFO
+  with finer FFT bins and less CPU. /8 gives 300 kHz with 37 Hz bins.
+- **Satellite labels on the waterfall**: every active downlink of the satellites above the horizon
+  that falls in the span, at its Doppler-shifted frequency (name, mode, elevation; transponders
+  with their passband). Tap next to a label to tune exactly onto it.
+- **IQ recorder**: the red dot next to play records what the receiver gets as an SDR++
+  compatible WAV into Downloads/SatHunter, with the receiver settings and satellite inside.
+- **CW**: 2 kHz filter by default (a beacon a few hundred Hz off is still heard); the VFO line is
+  faint on the waterfall, so a tracked beacon is not hidden under it.
+- **RTL-SDR frequency correction (ppm)** in Settings; automatic gain stops at 40 dB (an LNA in
+  front needs no more); a retune made while the RTL-SDR was opening is no longer lost (it could
+  leave the receiver on the wrong frequency while the display showed the right one).
+- Satellites tab works in landscape (list beside the details).
 
 ## New in beta 8
 
