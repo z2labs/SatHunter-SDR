@@ -16,3 +16,17 @@ Xiaomi 10 Pro, app with Doppler tracking on, USB 2.8 kHz, max elevation ~19 deg.
 | Offset | the beat tone 2325 Hz at the start (USB): the carrier 2.3 kHz (5.3 ppm) above the tracked frequency. An RTL-SDR v3 TCXO is within ~1 ppm, so most of it is the satellite's transmitter offset and / or the TLE |
 | Residual drift | 2325 -> 2219 Hz in 30 s, -2.2 Hz/s on average (-3.7 Hz/s in the first 15 s): the predicted Doppler slope is a little off (TLE age); the tracker's offset (drag the VFO onto the trace) takes care of the constant part |
 | Display | the beacon was right under the VFO line on the waterfall (fixed: the line is faint there now) |
+
+## Recording IQ for analysis
+
+The red dot next to the play button records what the receiver gets (after decimation) as a
+2-channel 16-bit WAV with an SDR++ style name (`baseband_<Hz>Hz_<time>_<date>.wav`); Android 10+
+saves into Downloads/SatHunter. A JSON chunk in the file keeps the receiver settings, the
+selected satellite and transmitter, the station and every retune.
+
+Analyse a recording (spectrum, carriers, CW at the VFO, waterfall image):
+
+    cargo run --release -p sh-engine --example iq_analyze -- baseband_....wav [vfo_hz] [waterfall.pgm]
+
+/8 decimation keeps the files small: 300 kS/s = 1.2 MB/s (a 10-minute pass: ~720 MB);
+the full 2.4 MS/s is 9.6 MB/s.

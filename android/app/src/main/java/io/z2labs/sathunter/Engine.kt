@@ -25,6 +25,9 @@ data class Marker(
     val selected: Boolean,
 )
 
+/** IQ recording in progress */
+data class Rec(val name: String, val secs: Double, val bytes: Long, val dropped: Long)
+
 data class Status(
     val running: Boolean = false,
     val source: String = "demo",
@@ -57,6 +60,7 @@ data class Status(
     /// Sample blocks the DSP could not keep up with (since the source started)
     val dropped: Long = 0,
     val markers: List<Marker> = emptyList(),
+    val recording: Rec? = null,
 )
 
 data class PassInfo(
@@ -293,6 +297,8 @@ class Engine(dataDir: String) {
     fun simulate() = async("simulate")
     fun realTime() = async("real_time")
 
+    fun refreshNow() = refreshStatus()
+
     private fun refreshStatus() {
         val j = try { JSONObject(Native.command("""{"cmd":"status"}""")) } catch (_: Exception) { return }
         if (!j.optBoolean("ok")) return
@@ -325,6 +331,9 @@ class Engine(dataDir: String) {
             altM = st?.optDouble("alt_m") ?: 120.0,
             locator = j.optString("locator"),
             followGps = j.optBoolean("follow_gps", true),
+            recording = j.optJSONObject("recording")?.let { r ->
+                Rec(r.optString("name"), r.optDouble("secs", 0.0), r.optLong("bytes", 0), r.optLong("dropped", 0))
+            },
             markers = j.optJSONArray("markers")?.let { a ->
                 (0 until a.length()).mapNotNull { k ->
                     a.optJSONObject(k)?.let { m ->

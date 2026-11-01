@@ -297,7 +297,8 @@ pub fn decode(audio: &[f32], fs: f64, band: (f64, f64)) -> CwReport {
     // (longer than ~5 units: a steady carrier, not a dash; left out of the speed estimate)
     let normal: Vec<f64> = marks.iter().copied().filter(|m| *m < 5.0 * rough).collect();
     let (c1, c2) = kmeans2(&normal);
-    let (dot_m, mark_thr) = if c2 > 2.0 * c1 { ((c1 + c2 / 3.0) / 2.0, (c1 + c2) / 2.0) } else { (c1.min(c2), 2.0 * c1.min(c2)) };
+    // (the smearing shrinks the 3:1 dash / dot ratio, to ~2:1 at 20 WPM: 1.5 still tells them apart)
+    let (dot_m, mark_thr) = if c2 > 1.5 * c1 { ((c1 + c2 / 3.0) / 2.0, (c1 + c2) / 2.0) } else { (c1.min(c2), 2.0 * c1.min(c2)) };
     // Element gaps (one unit, shortened by the same amount the dots are lengthened): the
     // unit is the mean of the two, then letter gaps are 3 units, word gaps 7
     let mut short_gaps: Vec<f64> = runs.iter().filter(|r| !r.0 && r.1 < 2.0 * dot_m).map(|r| r.1).collect();

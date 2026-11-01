@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var compass: Compass
     private lateinit var gps: Gps
     private lateinit var usb: UsbSdrs
+    private lateinit var recorder: IqRecorder
     private val prefs by lazy { getSharedPreferences("ui", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
             engine.gps(l.latitude, l.longitude, if (l.hasAltitude()) l.altitude else 0.0)
             compass.setPosition(l.latitude, l.longitude, l.altitude)
         }
+        recorder = IqRecorder(this, engine)
         usb = UsbSdrs(this, engine)
         usb.register()
         setContent { SatHunterTheme { App() } }
@@ -133,6 +135,15 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(st.running) { if (st.running) audio.start() else audio.stop() }
+        // The engine closes a recording itself when the receiver stops: publish the file
+        LaunchedEffect(st.recording == null) { if (st.recording == null) recorder.finishedElsewhere() }
+        val saved by recorder.saved.collectAsState()
+        LaunchedEffect(saved) {
+            saved?.let {
+                android.widget.Toast.makeText(this@MainActivity, it, android.widget.Toast.LENGTH_LONG).show()
+                recorder.clearSaved()
+            }
+        }
         LaunchedEffect(tab) { engine.wantList = tab == 1; if (tab == 1) engine.refreshList() }
         LaunchedEffect(muted) { audio.muted = muted }
         LaunchedEffect(volume) { audio.volume = volume }
@@ -169,6 +180,7 @@ class MainActivity : ComponentActivity() {
                         onCenter = { engine.centerSmooth(it) },
                         onMode = { engine.mode(it) },
                         onDecimation = { engine.decimation(it) },
+                        onRecord = { recorder.toggle(st.recording != null) },
                         onCompass = { setCompass(!compassOn) },
                     )
                     1 -> SatScreen(list, detail, engine, radarOn) {

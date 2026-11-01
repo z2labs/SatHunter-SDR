@@ -3,6 +3,7 @@
 //! and audio. Nothing in here panics on bad input; errors come back as {"ok": false, "error"}.
 
 pub mod config;
+pub mod record;
 pub mod sat;
 
 use config::Config;
@@ -91,6 +92,8 @@ struct Inner {
     time_shift: Mutex<(f64, f64)>, // (seconds added to the clock, LOS of the simulated pass)
     work: Mutex<Sender<Work>>,
     messages: Mutex<VecDeque<String>>,
+    /// IQ recording in progress
+    recorder: Mutex<Option<record::Recorder>>,
 }
 
 impl Inner {
@@ -172,6 +175,13 @@ enum Cmd {
     UsbDetach { vid: u16, pid: u16 },
     /// Choose the source: demo, rtl, esp
     Source { id: String },
+    /// The file name a recording started now would get
+    RecordName,
+    /// Start recording IQ: into `dir` (a folder), or into `fd` (Android: an opened Downloads
+    /// entry, the engine takes it over); `name` as given by record_name
+    RecordStart { dir: Option<String>, fd: Option<i32>, name: Option<String> },
+    /// Stop recording; returns the metadata written into the file
+    RecordStop,
 }
 
 impl Engine {
@@ -205,6 +215,7 @@ impl Engine {
             time_shift: Mutex::new((0.0, 0.0)),
             work: Mutex::new(wtx),
             messages: Mutex::new(VecDeque::new()),
+            recorder: Mutex::new(None),
             devices: Mutex::new(Vec::new()),
             cfg: Mutex::new(cfg),
         });
@@ -500,6 +511,9 @@ impl Engine {
                 i.save();
                 Ok(json!({}))
             }
+            Cmd::RecordName => Ok(json!({ "name": record_name(i) })),
+            Cmd::RecordStart { dir, fd, name } => record_start(i, dir, fd, name),
+            Cmd::RecordStop => record_stop(i, "stopped"),
             Cmd::SatList => Ok(sat_list(i)),
             Cmd::SatDetail => Ok(sat_detail(i)),
             Cmd::Status => Ok(status(i)),
@@ -654,6 +668,7 @@ fn start(i: &Arc<Inner>) -> Result<(), String> {
 }
 
 fn stop(i: &Inner) {
+    let _ = record_stop(i, "receiver stopped");
     i.running.store(false, Ordering::SeqCst);
     if let Some(mut s) = lock(&i.source).take() {
         s.stop();
@@ -718,6 +733,20 @@ fn dsp(i: Arc<Inner>, rx: Receiver<sh_sources::Block>) {
         if !matches!(&spec, Some((_, r, n)) if *r == b.rate && *n == p.fft_size) {
             spec = Some((Spectrum::new(p.fft_size, b.rate, p.fps, 0.4), b.rate, p.fft_size));
         }
+        {
+            let mut rec = lock(&i.recorder);
+            let changed = matches!(rec.as_ref(), Some(r) if r.rate != b.rate);
+            if changed {
+                // a new sample rate / decimation cannot go on in the same file
+                if let Some(r) = rec.take() {
+                    let name = r.name.clone();
+                    let _ = r.finish(json!({ "end": "sample rate changed" }));
+                    i.note(format!("recording {name} closed: the sample rate changed"));
+                }
+            } else if let Some(r) = rec.as_mut() {
+                r.push(&b.samples, b.center_hz);
+            }
+        }
         let offset = p.vfo_hz - b.center_hz;
         if !matches!(&demod, Some((_, r, m, bw)) if *r == b.rate && *m == p.mode && *bw == p.bw) {
             demod = Some((Demodulator::new(p.mode, b.rate, offset, p.bw), b.rate, p.mode, p.bw));
@@ -754,6 +783,91 @@ fn dsp(i: Arc<Inner>, rx: Receiver<sh_sources::Block>) {
             o.rate = b.rate;
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// IQ recording
+
+fn record_name(i: &Inner) -> String {
+    let c = {
+        let o = lock(&i.out);
+        if o.center_hz > 0.0 { o.center_hz } else { lock(&i.cfg).center_hz }
+    };
+    record::file_name(c, now_unix())
+}
+
+fn record_start(i: &Inner, dir: Option<String>, fd: Option<i32>, name: Option<String>) -> Result<Value, String> {
+    // Take the descriptor over first, so it is closed on any error below
+    #[cfg(unix)]
+    let fd_file = fd.map(|fd| {
+        use std::os::fd::FromRawFd;
+        // SAFETY: the app detached this descriptor for us; we own and close it
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    });
+    #[cfg(not(unix))]
+    let fd_file: Option<std::fs::File> = fd.and(None);
+    if lock(&i.recorder).is_some() {
+        return Err("already recording".into());
+    }
+    let (center, rate) = {
+        let o = lock(&i.out);
+        (o.center_hz, o.rate)
+    };
+    if !i.running.load(Ordering::SeqCst) || rate <= 0.0 {
+        return Err("start the receiver first".into());
+    }
+    let name = name.unwrap_or_else(|| record::file_name(center, now_unix()));
+    let file: std::fs::File = match (fd_file, dir) {
+        (Some(f), _) => f,
+        (_, Some(d)) => {
+            std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+            std::fs::File::create(Path::new(&d).join(&name)).map_err(|e| e.to_string())?
+        }
+        _ => return Err("no place to write the recording".into()),
+    };
+    let c = lock(&i.cfg).clone();
+    let sat = {
+        let st = lock(&i.sat);
+        c.selected.and_then(|n| st.sats.iter().find(|s| s.norad == n).map(|s| json!({ "norad": n, "name": s.name })))
+    };
+    let tx = selected_tx(i).map(|t| json!({ "description": t.description, "mode": t.mode, "downlink_low": t.down_low, "downlink_high": t.down_high }));
+    let meta = json!({
+        "app": concat!("SatHunterSDR ", env!("CARGO_PKG_VERSION")),
+        "start_unix": now_unix(),
+        "sample_rate": rate,
+        "center_hz": center,
+        "format": "IQ, 2 x 16-bit PCM, I left, Q right",
+        "source": c.source,
+        "source_status": lock(&i.source).as_ref().map(|s| s.status()).unwrap_or_default(),
+        "hardware_rate": c.rate,
+        "decimation": c.decimation,
+        "gain_db": c.gain,
+        "ppm": c.ppm,
+        "bias_tee": c.bias_tee,
+        "vfo_hz": c.vfo_hz,
+        "mode": c.mode,
+        "bandwidth_hz": c.bw,
+        "station": c.station,
+        "satellite": sat,
+        "transmitter": tx,
+        "tracking": lock(&i.sat).tracking,
+    });
+    let r = record::Recorder::start(file, name.clone(), rate, center, now_unix(), meta).map_err(|e| e.to_string())?;
+    *lock(&i.recorder) = Some(r);
+    i.note(format!("recording IQ to {name}"));
+    Ok(json!({ "name": name }))
+}
+
+fn record_stop(i: &Inner, why: &str) -> Result<Value, String> {
+    let Some(r) = lock(&i.recorder).take() else { return Ok(json!({ "recording": false })) };
+    let name = r.name.clone();
+    let (vfo, mode, offset) = {
+        let c = lock(&i.cfg);
+        (c.vfo_hz, c.mode.clone(), lock(&i.sat).tracker.user_offset)
+    };
+    let meta = r.finish(json!({ "end_unix": now_unix(), "end": why, "vfo_hz_at_end": vfo, "mode_at_end": mode, "tracker_offset_hz": offset }))?;
+    i.note(format!("recording {name} saved, {:.1} s", meta["duration_s"].as_f64().unwrap_or(0.0)));
+    Ok(json!({ "name": name, "meta": meta }))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1108,6 +1222,7 @@ fn status(i: &Inner) -> Value {
         "locator": locator::from_lat_lon(c.station.lat, c.station.lon),
         "follow_gps": c.follow_gps,
         "markers": lock(&i.sat).markers.clone(),
+        "recording": lock(&i.recorder).as_ref().map(|r| json!({ "name": r.name, "secs": r.seconds(), "bytes": r.bytes(), "dropped": r.dropped })),
     })
 }
 
@@ -1342,6 +1457,43 @@ mod tests {
         }
         assert!(got > 20_000 && energy > 1.0, "audio {got} samples, energy {energy}");
         cmd(&e, r#"{"cmd":"stop"}"#);
+    }
+
+    /// Record the demo's CW beacon through decimation, read the file back and decode the
+    /// beacon from the recording with the same demodulator and the CW decoder.
+    #[test]
+    fn iq_recording_plays_back_and_decodes() {
+        let d = tmpdir("rec");
+        write_iss(&d);
+        Config { update_days: 0.0, rate: 2_400_000.0, ..Config::default() }.save(&d.join("config.json"));
+        let e = Engine::new(&d);
+        cmd(&e, r#"{"cmd":"source","id":"demo"}"#);
+        cmd(&e, r#"{"cmd":"decimation","factor":8}"#);
+        cmd(&e, r#"{"cmd":"tune","hz":432400000}"#);
+        std::thread::sleep(Duration::from_millis(300));
+        let out = d.join("rec");
+        let r = cmd(&e, &format!(r#"{{"cmd":"record_start","dir":"{}"}}"#, out.display()));
+        assert_eq!(r["ok"], true, "{r}");
+        let name = r["name"].as_str().unwrap().to_string();
+        assert!(name.starts_with("baseband_") && name.ends_with(".wav"));
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(cmd(&e, r#"{"cmd":"status"}"#)["recording"]["secs"].as_f64().unwrap() > 0.1);
+        std::thread::sleep(Duration::from_millis(5500));
+        let r = cmd(&e, r#"{"cmd":"record_stop"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(cmd(&e, r#"{"cmd":"status"}"#)["recording"].is_null());
+        cmd(&e, r#"{"cmd":"stop"}"#);
+        let (fs, iq, meta) = record::read_wav(&std::fs::read(out.join(&name)).unwrap()).unwrap();
+        assert_eq!(fs, 300_000.0);
+        assert!(iq.len() as f64 > 5.0 * fs, "{} samples", iq.len());
+        assert_eq!(meta["decimation"], 8);
+        let center = meta["center_hz"].as_f64().unwrap();
+        // Demodulate the recording as CW (USB-like beat) and decode
+        let mut dm = Demodulator::new(Mode::Cw, fs, 432.4e6 - center, 500.0);
+        let mut audio = Vec::new();
+        dm.process(&iq, &mut audio);
+        let rep = sh_dsp::cw::decode(&audio, sh_dsp::demod::AUDIO_RATE, (300.0, 3500.0));
+        assert!(rep.text.contains("VV DE HG0"), "decoded {:?}", rep.text); // the 6 s recording ends there
     }
 
     #[test]

@@ -30,7 +30,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -102,6 +104,7 @@ fun ReceiverScreen(
     onCenter: (Double) -> Unit,
     onMode: (String) -> Unit,
     onDecimation: (Int) -> Unit,
+    onRecord: () -> Unit,
     onCompass: () -> Unit,
 ) {
     var viewLo by remember { mutableFloatStateOf(0f) }
@@ -151,7 +154,7 @@ fun ReceiverScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (!fullscreen) TopBar(st, shownVfo, muted, onMute, volume, onVolume, onPlay, tuneTo) { onFullscreen(true) }
+        if (!fullscreen) TopBar(st, shownVfo, muted, onMute, volume, onVolume, onPlay, onRecord, tuneTo) { onFullscreen(true) }
 
         Box(
             Modifier.weight(1f).fillMaxWidth().onSizeChanged { areaH = it.height.coerceAtLeast(1) }.pointerInput(Unit) {
@@ -310,6 +313,7 @@ fun ReceiverScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.weight(1f)) { LevelLine(st, short = true) }
                             Volume(muted, onMute, volume, onVolume, Modifier.width(120.dp))
+                            RecordButton(st, onRecord, Modifier.size(36.dp))
                             PlayButton(st, onPlay, Modifier.size(36.dp))
                         }
                     }
@@ -365,6 +369,30 @@ private fun LevelLine(st: Status, short: Boolean = false) {
     }
 }
 
+/** IQ recording: a red dot to start (with the receiver running), a red square to stop. */
+@Composable
+private fun RecordButton(st: Status, onRecord: () -> Unit, modifier: Modifier = Modifier) {
+    val rec = st.recording != null
+    IconButton(onClick = onRecord, enabled = st.running || rec, modifier = modifier) {
+        Icon(
+            if (rec) Icons.Filled.StopCircle else Icons.Filled.FiberManualRecord,
+            contentDescription = if (rec) "Stop IQ recording" else "Record IQ",
+            tint = if (st.running || rec) Color(0xFFFF4A3A) else Dim,
+        )
+    }
+}
+
+@Composable
+private fun RecLine(r: io.z2labs.sathunter.Rec) {
+    val s = r.secs.toInt()
+    val mb = r.bytes / 1_000_000.0
+    val drop = if (r.dropped > 0) " · ${r.dropped} lost" else ""
+    Text(
+        "● REC %d:%02d · %.0f MB%s".format(s / 60, s % 60, mb, drop),
+        color = Color(0xFFFF4A3A), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+    )
+}
+
 @Composable
 private fun PlayButton(st: Status, onPlay: () -> Unit, modifier: Modifier = Modifier) {
     FilledIconButton(onClick = onPlay, modifier = modifier, colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (st.running) Down else Accent)) {
@@ -375,7 +403,7 @@ private fun PlayButton(st: Status, onPlay: () -> Unit, modifier: Modifier = Modi
 @Composable
 private fun TopBar(
     st: Status, vfo: Double, muted: Boolean, onMute: () -> Unit, volume: Float, onVolume: (Float) -> Unit,
-    onPlay: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit,
+    onPlay: () -> Unit, onRecord: () -> Unit, onTune: (Double) -> Unit, onFullscreen: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().background(Panel).padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
         // Nixie tubes over the full width
@@ -387,9 +415,12 @@ private fun TopBar(
                 // Blocks lost because the DSP fell behind: the spectrum and audio are then not
                 // what is on the air; show it instead of hiding it
                 val src = if (st.dropped > 0) "$base · ${st.dropped} blocks dropped (CPU)" else base
-                if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                st.recording?.let { RecLine(it) } ?: run {
+                    if (src.isNotEmpty()) Text(src, color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
-            Volume(muted, onMute, volume, onVolume, Modifier.width(130.dp))
+            Volume(muted, onMute, volume, onVolume, Modifier.width(110.dp))
+            RecordButton(st, onRecord)
             PlayButton(st, onPlay)
             IconButton(onClick = onFullscreen) { Icon(Icons.Filled.Fullscreen, contentDescription = "Full screen") }
         }
