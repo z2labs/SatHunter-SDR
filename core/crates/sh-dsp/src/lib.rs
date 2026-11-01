@@ -4,6 +4,7 @@
 pub use rustfft::num_complex::Complex32;
 
 pub mod channel;
+pub mod cw;
 pub mod demod;
 pub mod filter;
 pub mod spectrum;

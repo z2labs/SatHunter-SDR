@@ -220,7 +220,12 @@ fun ReceiverScreen(
                 val xb = max(x(b), xa + 2f)
                 drawRect(Color(0x33FFFFFF), Offset(xa, 0f), Size(xb - xa, specH))
                 val xv = x(vfo)
-                drawLine(Color(0xFFFF4A3A), Offset(xv, 0f), Offset(xv, size.height), 2.dp.toPx())
+                // Solid on the spectrum; on the waterfall only short ticks at the edges and a
+                // faint line, so the signal right on the VFO (a tracked CW beacon) is not hidden
+                drawLine(Color(0xFFFF4A3A), Offset(xv, 0f), Offset(xv, specH), 2.dp.toPx())
+                drawLine(Color(0xFFFF4A3A), Offset(xv, specH), Offset(xv, specH + 10.dp.toPx()), 2.dp.toPx())
+                drawLine(Color(0xFFFF4A3A), Offset(xv, size.height - 10.dp.toPx()), Offset(xv, size.height), 2.dp.toPx())
+                drawLine(Color(0x40FF4A3A), Offset(xv, specH), Offset(xv, size.height), 1.dp.toPx())
                 // Frequency scale along the bottom of the spectrum
                 val f0 = shownCenter + (viewLo - 0.5) * s.specRate
                 val f1 = shownCenter + (viewHi - 0.5) * s.specRate
