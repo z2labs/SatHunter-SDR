@@ -57,7 +57,7 @@ Schematic: [kicad/sathunter_fg23_schematic.pdf](kicad/sathunter_fg23_schematic.p
 ```
 generator/gen_sathunter.py   the schematic is generated from Python (parts, nets, symbols, BOM); do not hand-edit kicad/
 generator/check_netlist.py   KiCad-extracted netlist == the generator's part table (catches touching label stubs, shorts)
-generator/twin_l1.py         digital twin layer 1: netlist against a spec written from the datasheets / firmware / pin map
+generator/twin_check.py         digital twin layer 1 (guide 2026-11-07: twin_check.py on the .net before placement): netlist against a spec written from the datasheets / firmware / pin map
 generator/kfp.py, src_fp/    footprint reader and the Silabs QFN48 land pattern (from fg23-cw-trainer)
 kicad/                       KiCad project (opens in KiCad 7-10), SH.kicad_sym, SH.pretty, BOM.csv, dnp.txt, schematic PDF
 ```
@@ -67,7 +67,7 @@ Rebuild and check:
 python3 generator/gen_sathunter.py
 kicad-cli sch export netlist --format kicadsexpr -o kicad/netlist.net kicad/sathunter_fg23.kicad_sch
 python3 generator/check_netlist.py
-python3 generator/twin_l1.py && python3 generator/twin_l1.py --selftest
+python3 generator/twin_check.py && python3 generator/twin_check.py --selftest
 kicad-cli sch export pdf -o kicad/sathunter_fg23_schematic.pdf kicad/sathunter_fg23.kicad_sch
 ```
 

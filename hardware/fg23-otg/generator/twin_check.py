@@ -14,7 +14,7 @@ Sources, per section:
   [AN923]    AN923.2 Table 4.1, 434 MHz: RX inductor 82 nH, RX shunt C not mounted
   [SWL]      Spacewalker LNA 434 v1.3 schematic: HDF434A1-S6 pin 2 IN, pin 5 OUT
   [USB]      USB Type-C spec: 5.1k Rd on CC1 and CC2 for a sink; D+ = A6/B6, D- = A7/B7
-Run:  python3 twin_l1.py [netlist.net]      self-test: python3 twin_l1.py --selftest
+Run:  python3 twin_check.py [netlist.net]      self-test: python3 twin_check.py --selftest
 Exit: 0 pass, 1 FAIL, 3 self-test failed.
 """
 import sys, os, copy
@@ -163,7 +163,7 @@ def main(path):
     for s, w, d in res:
         if s != "PASS" or "-v" in sys.argv: print(f"  {s:4} {w}" + (f"   [{d}]" if d else ""))
     np_ = sum(1 for r in res if r[0] == "PASS"); nw = sum(1 for r in res if r[0] == "WARN"); nf = sum(1 for r in res if r[0] == "FAIL")
-    print(f"twin L1: {np_} pass, {nw} warn, {nf} FAIL")
+    print(f"twin_check L1: {np_} pass, {nw} warn, {nf} FAIL")
     return 1 if nf else 0
 
 # ---------------------------------------------------------------- self-test: injected faults must be caught
