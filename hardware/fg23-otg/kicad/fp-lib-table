@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "SH")(type "KiCad")(uri "${KIPRJMOD}/SH.pretty")(options "")(descr "SatHunter FG23 project footprints"))
+)
