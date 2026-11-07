@@ -44,7 +44,7 @@ def load(path):
         props = {kfp.uq(kfp.find(pp, "name")[1]) for pp in kfp.findall(c, "property")}     # KiCad 7: (property (name "dnp"))
         comps[ref] = dict(value=val, dnp="dnp" in props)
     for n in kfp.findall(kfp.find(t, "nets"), "net"):
-        name = kfp.uq(kfp.find(n, "name")[1])
+        name = kfp.uq(kfp.find(n, "name")[1]).lstrip("/")
         nets[name] = {(kfp.uq(kfp.find(x, "ref")[1]), kfp.uq(kfp.find(x, "pin")[1])) for x in kfp.findall(n, "node")}
     return comps, nets
 class Board:

@@ -4,13 +4,12 @@ Catches drawing faults (touching label stubs, wires through pins) that silently 
 import sys, os, importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); import kfp
 def load_parts():
-    import runpy, io, contextlib
-    with contextlib.redirect_stdout(io.StringIO()): g = runpy.run_path(os.path.join(HERE, "gen_sathunter.py"))
-    return g["PARTS"]
+    import design
+    return design.PARTS
 def netlist(path):
     t = kfp.parse(open(path).read()); out = {}
     for n in kfp.findall(kfp.find(t, "nets"), "net"):
-        name = kfp.uq(kfp.find(n, "name")[1])
+        name = kfp.uq(kfp.find(n, "name")[1]).lstrip("/")      # local labels on the root sheet: "/NAME"
         for x in kfp.findall(n, "node"): out[(kfp.uq(kfp.find(x, "ref")[1]), kfp.uq(kfp.find(x, "pin")[1]))] = name
     return out
 def main(net_path):

@@ -8,7 +8,7 @@ SMA - RF ESD - SAW1 - QPL9547 - SAW2 - [pi-pad] - RX match - EFR32FG23 (RX, 39 M
       -> SPI 19.5 MHz -> ESP32-S3-WROOM-1-N16R8 (PSRAM ring, TinyUSB CDC) -> USB-C -> phone
 ```
 
-**Status:** schematic generated, netlist self-check 0 problems, digital twin layer 1: 50 pass, 0 FAIL, self-test 8/8.
+**Status:** schematic generated in the house style, netlist self-check 0 problems, digital twin layer 1: 50 pass, 0 FAIL, self-test 8/8.
 Placement and routing are the next step (srouter, same flow as fg23-cw-trainer). Not fabricated or measured.
 
 Schematic: [kicad/sathunter_fg23_schematic.pdf](kicad/sathunter_fg23_schematic.pdf). BOM with design notes: [kicad/BOM.csv](kicad/BOM.csv).
@@ -55,16 +55,19 @@ Schematic: [kicad/sathunter_fg23_schematic.pdf](kicad/sathunter_fg23_schematic.p
 ## Files
 
 ```
-generator/gen_sathunter.py   the schematic is generated from Python (parts, nets, symbols, BOM); do not hand-edit kicad/
-generator/check_netlist.py   KiCad-extracted netlist == the generator's part table (catches touching label stubs, shorts)
-generator/twin_check.py         digital twin layer 1 (guide 2026-11-07: twin_check.py on the .net before placement): netlist against a spec written from the datasheets / firmware / pin map
-generator/kfp.py, src_fp/    footprint reader and the Silabs QFN48 land pattern (from fg23-cw-trainer)
+generator/design.py          parts, footprints and nets: the single source of truth
+generator/gen_sch.py         draws the schematic in the house style (as ionos-maximus-rpi-sdr): KiCad library symbols,
+                             wired circuits, supplies as power symbols, global labels between framed blocks, A2
+generator/check_netlist.py   KiCad-extracted netlist == design.py (catches touching stubs, open T-joints, shorts)
+generator/twin_check.py      digital twin layer 1 (on the .net before placement): netlist against a spec written from
+                             the datasheets / firmware / pin map, self-test with injected faults
+generator/kfp.py, src_fp/    s-expression reader and the Silabs QFN48 land pattern (from fg23-cw-trainer)
 kicad/                       KiCad project (opens in KiCad 7-10), SH.kicad_sym, SH.pretty, BOM.csv, dnp.txt, schematic PDF
 ```
 
 Rebuild and check:
 ```
-python3 generator/gen_sathunter.py
+python3 generator/gen_sch.py
 kicad-cli sch export netlist --format kicadsexpr -o kicad/netlist.net kicad/sathunter_fg23.kicad_sch
 python3 generator/check_netlist.py
 python3 generator/twin_check.py && python3 generator/twin_check.py --selftest
